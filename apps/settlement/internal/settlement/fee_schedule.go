@@ -29,8 +29,13 @@ func LoadFeeSchedules(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID) ([]F
 	rows, err := tx.Query(ctx, `
 		SELECT effective_from, mdr_bps FROM fee_schedules
 		 WHERE merchant_id = $1
-		 ORDER BY effective_from ASC
+		 ORDER BY effective_from ASC, created_at ASC
 	`, merchantID)
+	// FIX: two rows with the same effective_from (a same-day correction) came
+	// back in arbitrary order, so settlement could bill the superseded rate
+	// while capture (feeSchedule.ts: effective_from DESC, created_at DESC)
+	// billed the correction. created_at ASC puts the newest entry last, which
+	// is the one EffectiveMdrBpsAt picks, so both services agree.
 	if err != nil {
 		return nil, err
 	}

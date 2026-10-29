@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { decodeEncryptionKey, decryptSecret } from "./secretCrypto.js";
 import { signPayload } from "./sign.js";
+import { canonicalJson } from "../payments/idempotency.js";
 import { buildEnvelope } from "./envelope.js";
 import { recordPayoutDisbursementEffect } from "./payoutDisbursement.js";
 import { WEBHOOK_DELIVERY_ID_HEADER, WEBHOOK_SIGNATURE_HEADER } from "./headers.js";
@@ -29,6 +30,8 @@ const WEBHOOK_ELIGIBLE_EVENT_TYPES: readonly string[] = [
   "transaction.captured",
   "transaction.voided",
   "settlement.paid",
+  // FP-300: refunds are live, so merchants get refund.succeeded.
+  "refund.succeeded",
 ];
 const NOTIFY_CHANNEL = "outbox_events_channel";
 
@@ -169,7 +172,13 @@ async function attemptOneDelivery(
       [WEBHOOK_DELIVERY_ID_HEADER]: row.delivery_event_id,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(row.payload),
+    // FIX (FP-240 "merchants can't verify our webhook signatures"):
+    // signPayload signs canonicalJson(payload) (keys sorted), but the body
+    // sent was JSON.stringify(payload) (keys in insertion order). A merchant
+    // verifying the HMAC over the bytes they received (the only correct way)
+    // got a mismatch whenever the payload's keys were not already sorted.
+    // Send exactly the string that was signed.
+    body: canonicalJson(row.payload),
     timeoutMs: config.webhookRequestTimeoutMs,
   });
 

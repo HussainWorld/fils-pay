@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { Config } from "../config.js";
 import { randomToken } from "../lib/crypto.js";
+import { isIP } from "node:net";
 import { BadRequestError } from "../lib/errors.js";
 import { decodeEncryptionKey, encryptSecret } from "./secretCrypto.js";
 
@@ -25,7 +26,38 @@ export function validateWebhookUrl(rawUrl: string, config: Pick<Config, "nodeEnv
   if (config.nodeEnv === "production" && parsed.protocol !== "https:") {
     throw new BadRequestError("invalid_url");
   }
+  // FIX (SSRF): "https-only in prod" was the whole protection, so a merchant
+  // could point their webhook at https://127.0.0.1, https://10.x, the cloud
+  // metadata address, or a bare compose service name (postgres, settlement),
+  // and the dispatcher would POST there from inside our network and store the
+  // response excerpt where the merchant can read it. In production, refuse
+  // hosts that are not public. (Redirects are refused in transport.ts too.)
+  if (config.nodeEnv === "production" && !isPublicHostname(parsed.hostname)) {
+    throw new BadRequestError("invalid_url", "webhook URL must point to a public host");
+  }
   return parsed;
+}
+
+/** True unless the host is an internal name or a loopback/private/link-local IP literal. */
+export function isPublicHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
+    return false;
+  }
+  const kind = isIP(host);
+  if (kind === 0) return host.includes("."); // a single-label name only resolves inside our network
+  if (kind === 4) {
+    const [a, b] = host.split(".").map(Number) as [number, number];
+    return !(
+      a === 0 || a === 10 || a === 127 ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 100 && b >= 64 && b <= 127)
+    );
+  }
+  // IPv6: loopback, unspecified, unique-local, link-local, IPv4-mapped
+  return !(host === "::1" || host === "::" || /^f[cd]/.test(host) || /^fe[89ab]/.test(host) || host.startsWith("::ffff:"));
 }
 
 export interface CreateWebhookEndpointInput {

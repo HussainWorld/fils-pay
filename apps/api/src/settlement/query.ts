@@ -285,12 +285,18 @@ export async function getReconciliationReport(
   const windowStart = bahrainLocalMidnightUtc(input.from);
   const windowEnd = bahrainLocalMidnightUtc(input.to);
 
-  const [ledgerResult, settlementResult, pendingResult, merchantResult] = await Promise.all([
+  const [ledgerResult, settlementResult, pendingResult, merchantResult, pendingRefundResult] = await Promise.all([
+    // FIX: the payout legs themselves (debit merchant_payable when a batch is
+    // paid) were counted as period activity, so the moment a batch was paid
+    // the ledger side dropped to ~0 while the batch side showed the payout:
+    // every paid day reported a gap of exactly minus its payout. Activity is
+    // everything except the payout of a batch.
     pool.query<{ net: string }>(
       `SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_fils ELSE -amount_fils END), 0) AS net
          FROM ledger_entries
         WHERE merchant_id = $1 AND account_id = 'merchant_payable'
-          AND occurred_at >= $2 AND occurred_at < $3`,
+          AND occurred_at >= $2 AND occurred_at < $3
+          AND description NOT LIKE 'settlement payout:%'`,
       [input.merchantId, windowStart, windowEnd],
     ),
     pool.query<{ total: string }>(
@@ -300,8 +306,8 @@ export async function getReconciliationReport(
           AND status IN ('closed', 'paid')`,
       [input.merchantId, input.from, input.to],
     ),
-    pool.query<{ amount_fils: string | number }>(
-      `SELECT te.amount_fils
+    pool.query<{ amount_fils: string | number; fee_fils: string | null }>(
+      `SELECT te.amount_fils, te.metadata->>'feeFils' AS fee_fils
          FROM transaction_events te
          JOIN transactions t ON t.id = te.transaction_id
         WHERE t.merchant_id = $1 AND te.event_type IN ('captured', 'partially_captured')
@@ -312,6 +318,16 @@ export async function getReconciliationReport(
     pool.query<{ mdr_bps: number; negotiated_discount_bps: number }>(
       `SELECT mdr_bps, negotiated_discount_bps FROM merchants WHERE id = $1`,
       [input.merchantId],
+    ),
+    // FP-300: a refund debits merchant_payable at once but only leaves the
+    // payout when a batch nets it. Until then it is "pending" too, with the
+    // opposite sign, or every refund shows up as an unexplained gap.
+    pool.query<{ net: string }>(
+      `SELECT COALESCE(SUM(amount_fils - fee_reversed_fils), 0)::text AS net
+         FROM refunds
+        WHERE merchant_id = $1 AND status = 'succeeded' AND settlement_batch_id IS NULL
+          AND occurred_at >= $2 AND occurred_at < $3`,
+      [input.merchantId, windowStart, windowEnd],
     ),
   ]);
 
@@ -324,9 +340,17 @@ export async function getReconciliationReport(
   let pendingUnbatchedFils = 0;
   for (const row of pendingResult.rows) {
     const amountFils = Number(row.amount_fils);
-    const feeFils = estimateFeeFils(amountFils, mdrBps, discountBps);
+    // FIX: the estimate used merchants.mdr_bps (comment: "kept in sync with
+    // fee_schedules by the 0046 trigger"; no such trigger exists, 0046 is the
+    // splits table). A merchant on a fee schedule (225 bps) was estimated at
+    // its stale flat rate (250 bps): an unexplained gap on every capture.
+    // capture.ts records the fee it actually charged on the event itself;
+    // use that, and estimate only for rows that predate it.
+    const feeFils = row.fee_fils !== null ? Number(row.fee_fils) : estimateFeeFils(amountFils, mdrBps, discountBps);
     pendingUnbatchedFils += amountFils - feeFils;
   }
+
+  pendingUnbatchedFils -= Number(pendingRefundResult.rows[0]?.net ?? 0);
 
   const ledgerMerchantPayableNetFils = Number(ledgerResult.rows[0]?.net ?? 0);
   const settlementNetPayoutFils = Number(settlementResult.rows[0]?.total ?? 0);
@@ -364,8 +388,17 @@ export async function getSettlementSummary(
   const windowEnd = bahrainLocalMidnightUtc(input.to);
 
   const result = await pool.query<SettlementSummaryRow>(
+    // FIX (perf note 2026-07 "summary slow and 38% higher than batches for
+    // Delta Wholesale"): this summed t.captured_fils, the transaction's
+    // RUNNING TOTAL, once per joined capture event. A transaction captured
+    // in 3 parts (1.000 + 1.000 + 1.000) contributed 3.000 three times =
+    // 9.000. That is why only the multi-capture merchant was "38% higher"
+    // (it was never a timing difference), and the join fan-out is also what
+    // made it slow. Sum each event's own amount (te.amount_fils), exactly as
+    // CloseBatch does, so the summary ties to the batches. Migration 0077
+    // adds the index the window filter needs instead of a seq scan.
     `WITH captured AS (
-       SELECT t.id, t.captured_fils
+       SELECT t.id, te.amount_fils
          FROM transactions t
          JOIN transaction_events te ON te.transaction_id = t.id
         WHERE t.merchant_id = $1
@@ -373,7 +406,7 @@ export async function getSettlementSummary(
           AND te.occurred_at >= $2 AND te.occurred_at < $3
      )
      SELECT COUNT(DISTINCT id) AS transaction_count,
-            COALESCE(SUM(captured_fils), 0) AS total_captured_fils
+            COALESCE(SUM(amount_fils), 0) AS total_captured_fils
        FROM captured`,
     [input.merchantId, windowStart, windowEnd],
   );

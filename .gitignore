@@ -6,3 +6,6 @@ dist/
 npm-debug.log*
 .DS_Store
 .claude/
+# deploy secrets (never commit). Note: ops/.env.docker was committed with a
+# real-looking acquirer secret; `.env` above does NOT match `.env.docker`.
+ops/.env.prod

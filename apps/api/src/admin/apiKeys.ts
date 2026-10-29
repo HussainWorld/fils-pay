@@ -35,6 +35,17 @@ export async function rotateApiKeyAsAdmin(
       rotatedFromKeyId: input.apiKeyId,
     });
 
+    // FIX (note: "there's a key rotation flow that doesn't do what you'd
+    // expect"): rotation issued a new key but never touched the old one, so
+    // after "Rotate API key" BOTH keys worked (verifyApiKey only checks
+    // revoked_at IS NULL). Keys are rotated because they leaked; a rotation
+    // that leaves the leaked key live protects nothing. Revoke the old key in
+    // the same transaction as issuing the new one.
+    await client.query(
+      `UPDATE api_keys SET revoked_at = now(), revoked_reason = 'rotated' WHERE id = $1`,
+      [input.apiKeyId],
+    );
+
     await insertAdminAuditLog(client, {
       adminUserId: input.adminUserId,
       action: "api_key_rotate",

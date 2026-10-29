@@ -59,9 +59,14 @@ export async function initiateMerchantRefund(
 ): Promise<ProcessRefundResult> {
   await assertRefundsNotOnHold(pool, input.merchantId);
 
+  // FIX (FP-300): the transaction was looked up by id alone and then refunded
+  // as `merchantId: txn.merchant_id`, i.e. under the OWNER's merchant id,
+  // not the caller's. Any merchant could refund any other merchant's
+  // transaction. Scope the lookup to the authenticated merchant (another
+  // merchant's transaction is simply "not found").
   const result = await pool.query<{ id: string; merchant_id: string }>(
-    `SELECT id, merchant_id FROM transactions WHERE id = $1`,
-    [input.transactionId],
+    `SELECT id, merchant_id FROM transactions WHERE id = $1 AND merchant_id = $2`,
+    [input.transactionId, input.merchantId],
   );
   const txn = result.rows[0];
   if (!txn) {
@@ -70,7 +75,7 @@ export async function initiateMerchantRefund(
 
   return processRefund(pool, acquirer, {
     transactionId: txn.id,
-    merchantId: txn.merchant_id,
+    merchantId: input.merchantId,
     amountFils: input.amountFils,
     idempotencyKey: input.idempotencyKey,
     actor: input.actor,

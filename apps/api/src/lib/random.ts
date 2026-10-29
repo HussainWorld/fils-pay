@@ -1,16 +1,21 @@
+import { randomInt } from "node:crypto";
+
 /** Generates a string of `n` random decimal digits (e.g. "042817"). */
+// FIX: was Math.floor(Math.random() * 10 ** n). Math.random is a
+// non-cryptographic PRNG (V8 xorshift128+): its state can be recovered from a
+// handful of outputs, after which future OTP codes are predictable. OTP codes
+// are the second login factor, so they need crypto randomness.
 export function randomDigits(n: number): string {
-  const max = 10 ** n;
-  return Math.floor(Math.random() * max)
-    .toString()
-    .padStart(n, "0");
+  let out = "";
+  for (let i = 0; i < n; i++) out += String(randomInt(10));
+  return out;
 }
 
 /** Generates a string of `n` characters drawn uniformly from `alphabet`. */
 export function randomFromAlphabet(alphabet: string, n: number): string {
   let out = "";
   for (let i = 0; i < n; i++) {
-    out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    out += alphabet[randomInt(alphabet.length)]; // FIX: crypto, not Math.random
   }
   return out;
 }

@@ -78,16 +78,13 @@ func runIfDue(ctx context.Context, db *pgxpool.Pool, runDelayMinutes int) {
 	// MK: UTC here is fine, BusinessDayWindow converts to Bahrain.
 	// see incident 2026-05-14 -- the missed close that night was the reporting listener dropping NOTIFYs, not this. -- FH
 	now := time.Now().UTC()
-	todayStart, _ := settlement.BusinessDayWindow(now)
-	dueAt := todayStart.Add(time.Duration(runDelayMinutes) * time.Minute)
-	if now.Before(dueAt) {
+	businessDate, due := dueBusinessDate(now, runDelayMinutes)
+	if !due {
 		// The grace period after today's Bahrain midnight hasn't elapsed
 		// yet; nothing new to do this tick.
 		logNextRunEstimate(now)
 		return
 	}
-	// am: logs show the close ~03:15 local not 00:15?? whatever, it runs. yalla
-	businessDate := todayStart.AddDate(0, 0, -1)
 
 	report, err := settlement.RunDailyBatch(ctx, db, businessDate, nil)
 	if err != nil {
@@ -112,4 +109,22 @@ func runIfDue(ctx context.Context, db *pgxpool.Pool, runDelayMinutes int) {
 	}
 
 	logNextRunEstimate(now)
+}
+
+// dueBusinessDate returns the business day that has just completed and
+// whether its close is due (Bahrain midnight + runDelayMinutes has passed).
+//
+// FIX (group chat: "the daily close is running at 3am local, not
+// midnight"; logs showed ~03:15): this did BusinessDayWindow(now) with now
+// in UTC. BusinessDayWindow takes the calendar date of its argument in the
+// argument's own zone, so it got the UTC date. Between 00:00 and 03:00
+// Bahrain the UTC date is still yesterday, so "today" was a day behind and
+// the day that just ended was not closed until UTC midnight = 03:00 Bahrain
+// (+15 min delay = 03:15). Captures in those 3 hours were sitting unbatched.
+// Take today's date in Asia/Bahrain first, then build the window from it.
+func dueBusinessDate(now time.Time, runDelayMinutes int) (time.Time, bool) {
+	today := settlement.BusinessDateAt(now)
+	todayStart, _ := settlement.BusinessDayWindow(today)
+	dueAt := todayStart.Add(time.Duration(runDelayMinutes) * time.Minute)
+	return today.AddDate(0, 0, -1), !now.Before(dueAt)
 }

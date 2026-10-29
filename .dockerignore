@@ -3,3 +3,6 @@
 # out of the images.
 **/node_modules
 .git
+**/dist
+ops/.env.prod
+ops/.env.docker

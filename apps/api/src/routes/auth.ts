@@ -9,7 +9,6 @@ import {
   promoteSession,
   revokeSession,
 } from "../auth/sessions.js";
-import { findOtpRecipient } from "../auth/users.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { BadRequestError, GoneError, TooManyRequestsError, UnauthorizedError } from "../lib/errors.js";
 
@@ -75,7 +74,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       throw new UnauthorizedError("invalid_credentials");
     }
 
-    const recipient = await findOtpRecipient(app.db, email) ?? user;
+    // FIX: this was `findOtpRecipient(app.db, email) ?? user`, which looks up
+    // the email across ALL merchants (LIMIT 1, no ORDER BY). When the same
+    // email exists under several merchants (allowed, see MerchantUserRow),
+    // the OTP and the pending session were bound to whichever row Postgres
+    // returned first, so verifying the OTP could log you in as a user of a
+    // different merchant than the one whose password you just checked. The
+    // session must belong to the user whose password was verified.
+    const recipient = user;
 
     const { code, expiresAt, rawToken } = await withTransaction(app.db, async (client) => {
       const challenge = await issueChallenge(client, {
@@ -153,18 +159,25 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         throw new GoneError("otp_expired");
       }
 
-      // am: check-then-increment is fine, max_attempts=5 so worst case is 5 guesses
-      // MK: 5 guesses per parallel batch? if i fire 50 at once they all read attempt_count=0
-      if (challenge.attempt_count >= challenge.max_attempts) {
+      // FIX (brute force): this read attempt_count, compared it, and only
+      // incremented after a wrong guess. 50 parallel requests all read
+      // attempt_count = 0 and all got to guess, so max_attempts limited
+      // nothing. Now the attempt is claimed atomically BEFORE checking the
+      // code: the UPDATE only succeeds while attempt_count < max_attempts,
+      // and Postgres serializes concurrent UPDATEs on the row.
+      const claimed = await app.db.query(
+        `UPDATE otp_challenges SET attempt_count = attempt_count + 1
+          WHERE id = $1 AND attempt_count < max_attempts AND consumed_at IS NULL
+          RETURNING attempt_count`,
+        [challenge.id],
+      );
+      if (claimed.rowCount === 0) {
         await revokeSession(app.db, pending.sessionId);
         throw new TooManyRequestsError("too_many_attempts");
       }
 
       const matches = verifyOtpCode(code, challenge.code_salt, challenge.code_hash);
       if (!matches) {
-        await app.db.query(`UPDATE otp_challenges SET attempt_count = attempt_count + 1 WHERE id = $1`, [
-          challenge.id,
-        ]);
         throw new UnauthorizedError("invalid_code");
       }
 

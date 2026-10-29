@@ -64,7 +64,15 @@ func RecalculateMDR(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID,
 		SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils
 		  FROM settlement_batches
 		 WHERE merchant_id = $1 AND batch_date >= $2 AND batch_date < $3
-		   AND status <> 'open'
+		   -- FIX (finance memo: "MDR recalculation changed batches that were
+		   -- already paid out"): this was status <> 'open', which matches
+		   -- 'closed' AND 'paid'. For a paid batch the bank transfer has already
+		   -- gone out at the old net, but the loop below rewrote its frozen
+		   -- fee_fils/net_payout_fils, posted a ledger adjustment against it
+		   -- and moved the cached balance, so the batch record no longer
+		   -- matched what was actually paid. Only a closed, not-yet-paid batch
+		   -- can still have its fee corrected before the money leaves.
+		   AND status = 'closed'
 		 ORDER BY batch_date
 		 FOR UPDATE
 	`, merchantID, from, to)
@@ -159,7 +167,17 @@ func recomputeBatchFee(ctx context.Context, tx pgx.Tx, batchID uuid.UUID, mdrBps
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("settlement: RecalculateMDR: iterate batch events for %s: %w", batchID, err)
 	}
-	return fee, nil
+	rows.Close()
+	// FP-300: a batch's fee is net of the fee reversed by the refunds it
+	// netted (see CloseBatch); keep that, or a recalculation would quietly
+	// re-charge the fee on refunded sales.
+	var reversed int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(fee_reversed_fils), 0) FROM refunds WHERE settlement_batch_id = $1
+	`, batchID).Scan(&reversed); err != nil {
+		return 0, fmt.Errorf("settlement: RecalculateMDR: refunds for %s: %w", batchID, err)
+	}
+	return fee - money.Fils(reversed), nil
 }
 
 // postMdrAdjustment posts the two-leg, entry_group_id-balanced pair for one

@@ -47,3 +47,12 @@ func BusinessDayWindow(date time.Time) (start, end time.Time) {
 	end = start.AddDate(0, 0, 1)
 	return start, end
 }
+
+// BusinessDateAt returns the Asia/Bahrain calendar date of instant t, as a
+// UTC-midnight date value (the same shape CloseBatch and the run-batch CLI
+// take). At 00:15 Bahrain on the 24th, t is 21:15 UTC on the 23rd, and
+// this returns the 24th.
+func BusinessDateAt(t time.Time) time.Time {
+	y, m, d := t.In(businessDayLocation).Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}

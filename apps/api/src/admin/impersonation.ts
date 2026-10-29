@@ -82,10 +82,18 @@ export type ImpersonationMerchantRole = "owner" | "finance" | "support";
 type AdminUserRole = "support" | "finance" | "super_admin";
 
 /** Maps the admin's role to the merchant-plane role used during impersonation. */
+// FIX: finance mapped to the merchant "finance" role and super_admin to
+// "owner", so "view as merchant" let an operator act AS the merchant with
+// full owner rights (issue API keys, create links, refund, change webhook
+// URLs), and those writes are recorded as merchant_session actions
+// (requireMerchantWriterActor), so the merchant's own audit trail could not
+// tell them apart. ARCHITECTURE/HANDOVER: impersonation maps every admin to
+// the merchant 'support' role and is read-only (this file's own interface
+// doc says "Always support"). Every admin role now maps to support.
 const MERCHANT_ROLE_FOR_ADMIN_ROLE: Record<AdminUserRole, ImpersonationMerchantRole> = {
   support: "support",
-  finance: "finance",
-  super_admin: "owner",
+  finance: "support",
+  super_admin: "support",
 };
 
 /** @property merchantRole Always "support" (ARCH §8): a grant is view-only. */

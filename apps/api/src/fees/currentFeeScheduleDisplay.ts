@@ -32,9 +32,17 @@ export async function getCurrentFeeScheduleForDisplay(
   const result = await pool.query<{ mdr_bps: number; effective_from: Date; created_at: Date }>(
     `SELECT mdr_bps, effective_from, created_at
        FROM fee_schedules
-      WHERE merchant_id = $1
-      ORDER BY created_at DESC
+      WHERE merchant_id = $1 AND effective_from <= now()
+      ORDER BY effective_from DESC, created_at DESC
       LIMIT 1`,
+    // FIX (support: "dashboard shows 245bps, we charge 225bps"): this was
+    // ORDER BY created_at DESC, i.e. "the row typed in last". A backdated
+    // correction for March (245bps, keyed in on 15 Aug) beat the August
+    // renegotiation (225bps) and was shown as "current", while capture
+    // (feeSchedule.ts) and settlement (fee_schedule.go) correctly bill the
+    // newest row whose effective_from has arrived. Use that same rule here
+    // (as this file's own interface comment already says) so the screen
+    // shows the rate we actually charge; a future-dated row is not shown yet.
     [merchantId],
   );
   const row = result.rows[0];

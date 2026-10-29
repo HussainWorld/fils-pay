@@ -42,6 +42,11 @@ export function createFetchTransport(): WebhookTransport {
         headers: req.headers,
         body: req.body,
         signal: controller.signal,
+        // FIX (SSRF): fetch follows redirects by default, so a public URL
+        // that answers 307 -> http://169.254.169.254/... or an internal
+        // service bypassed every URL check. A redirect is now just a failed
+        // (non-2xx) delivery.
+        redirect: "manual",
       });
       // unbounded read, a 1gb response would oom us? — am
       // MK: timeoutMs bounds it. fine for now, revisit after Eid inshallah

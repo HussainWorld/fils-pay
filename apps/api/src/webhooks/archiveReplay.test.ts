@@ -59,9 +59,16 @@ async function insertDelivery(
   opts: { eventType: string; createdAt: string },
 ): Promise<string> {
   const outbox = await pool.query<{ id: string }>(
+    // Corrected fixture: this inserted real, unconsumed outbox rows with an
+    // EMPTY payload into the shared test database. The reporting consumer
+    // (next workspace in `npm test`) then read them, tried to write a NULL
+    // merchant_id, and its pass failed every time: the 4 reporting test
+    // failures in the baseline. Give the row the merchantId every producer
+    // includes (and a zero amount for captured events).
     `INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload)
-     VALUES ($1, 'transaction', $2, '{}'::jsonb) RETURNING id`,
-    [opts.eventType, randomUUID()],
+     SELECT $1, 'transaction', $2, jsonb_build_object('merchantId', merchant_id, 'amountCapturedFils', 0)
+       FROM webhook_endpoints WHERE id = $3 RETURNING id`,
+    [opts.eventType, randomUUID(), endpointId],
   );
   const outboxEventId = outbox.rows[0]!.id;
 

@@ -1,11 +1,17 @@
-import { toFils, type Fils } from "@filspay/money";
+import { parseBhdToFils, type Fils } from "@filspay/money";
 import { BadRequestError } from "../lib/errors.js";
-import { parseDecimalMinor } from "../lib/decimal.js";
 
 /** Parses one CSV row's amount column into fils. */
 export function parseAdjustmentAmountFils(raw: string): Fils {
   try {
-    return toFils(parseDecimalMinor(raw), { allowNegative: true });
+    // FIX (finance memo: "4.755 BD imported as 0.475"): this used
+    // parseDecimalMinor(raw), whose default is 2 decimals ("cents"). It cut
+    // the fraction to 2 digits and glued it on, so "4.755" became "4"+"75"
+    // = 475 fils (0.475 BD, 10x too small, third decimal silently dropped).
+    // BD has 3 decimals (1 BD = 1000 fils). ADR-0001 rule 3 says CSV text
+    // must go through parseBhdToFils, which scales by 1000 exactly and
+    // rejects >3 decimals instead of truncating them.
+    return parseBhdToFils(raw);
   } catch {
     throw new BadRequestError("invalid_amount", `could not parse amount "${raw}"`);
   }

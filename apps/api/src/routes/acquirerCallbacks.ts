@@ -38,6 +38,19 @@ function getSignatureHeader(request: FastifyRequest): string | undefined {
  * endpoint has.
  */
 export async function acquirerCallbackRoutes(app: FastifyInstance): Promise<void> {
+  // FIX (FP-240): keep the exact raw body bytes so the signature is
+  // verified over what the acquirer signed, not over a re-serialization.
+  // Scoped to this plugin only (Fastify encapsulation).
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    (request as FastifyRequest & { rawBody?: string }).rawBody = body as string;
+    try {
+      done(null, body === "" ? {} : JSON.parse(body as string));
+    } catch (err) {
+      (err as { statusCode?: number }).statusCode = 400;
+      done(err as Error, undefined);
+    }
+  });
+
   app.post<{ Body: AcquirerCallbackBody }>("/callbacks", async (request, reply) => {
     const body = request.body ?? {};
     if (
@@ -53,9 +66,15 @@ export async function acquirerCallbackRoutes(app: FastifyInstance): Promise<void
         "callbackId, type, transactionId, occurredAt, outcome, and note are required",
       );
     }
+    // FIX: `outcome` was cast to the union without any check (the comments
+    // claim a schema validates it; there is none), so arbitrary strings
+    // were stored as the acquirer's verdict.
+    if (body.outcome !== "cleared" && body.outcome !== "confirmed_fraud") {
+      throw new BadRequestError("invalid_request", "outcome must be cleared or confirmed_fraud");
+    }
 
     const verification = verifyAcquirerCallbackSignature(
-      body,
+      (request as FastifyRequest & { rawBody?: string }).rawBody ?? body,
       getSignatureHeader(request),
       app.config.acquirerCallbackSigningSecret,
       app.config.acquirerCallbackRequireSignature,

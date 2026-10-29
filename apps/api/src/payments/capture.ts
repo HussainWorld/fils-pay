@@ -150,8 +150,8 @@ export async function captureTransaction(
       return { statusCode: 422, body };
     }
 
-    const merchantResult = await client.query<{ mdr_bps: number }>(
-      `SELECT mdr_bps FROM merchants WHERE id = $1`,
+    const merchantResult = await client.query<{ mdr_bps: number; negotiated_discount_bps: number }>(
+      `SELECT mdr_bps, negotiated_discount_bps FROM merchants WHERE id = $1`,
       [input.merchantId],
     );
     const merchant = merchantResult.rows[0];
@@ -193,7 +193,18 @@ export async function captureTransaction(
 
     // outcome === 'approved'. Integer math throughout — no float ever
     // enters this path.
-    const feeFils = applyRateFils(requestedAmount, Math.max(0, effectiveMdrBps - volumeTierBonusBps));
+    // FIX (FP-300 "fees come out right"): the fee here ignored the merchant's
+    // negotiated discount, while settlement (Go ComputeSettlementFee, the
+    // fee actually deducted from the payout) charges MDR on the discounted
+    // amount ("Discounts reduce the amount the MDR is charged on",
+    // ARCHITECTURE). The discount was patched in afterwards by a separate
+    // post-capture ledger adjustment that only the /v1/transactions route
+    // ran (payment-link captures never got it) and that rounds differently.
+    // So the ledger fee and the batch fee disagreed, and a refund reversed
+    // the wrong fee. Use the exact settlement formula here, once.
+    const discountBps = merchant.negotiated_discount_bps ?? 0;
+    const discountedAmount = subtractFils(requestedAmount, applyRateFils(requestedAmount, discountBps));
+    const feeFils = applyRateFils(discountedAmount, Math.max(0, effectiveMdrBps - volumeTierBonusBps));
     const newCapturedFils = addFils(capturedSoFar, requestedAmount);
     const newStatus = compareFils(newCapturedFils, amountAuthorized) === 0 ? "captured" : "partially_captured";
 

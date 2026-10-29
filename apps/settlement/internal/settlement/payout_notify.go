@@ -34,10 +34,7 @@ func EnqueuePayoutNotifications(ctx context.Context, db *pgxpool.Pool) (int, err
 		  FROM settlement_batches sb
 		 WHERE sb.status = 'paid'
 		   AND sb.net_payout_fils > 0
-		   AND NOT EXISTS (
-		     SELECT 1 FROM outbox_events oe
-		      WHERE oe.event_type = 'settlement.paid' AND oe.aggregate_id = sb.id
-		   )
+		   AND sb.paid_notified_at IS NULL
 		 ORDER BY sb.paid_at ASC
 		 LIMIT 500
 	`)
@@ -83,14 +80,44 @@ func EnqueuePayoutNotifications(ctx context.Context, db *pgxpool.Pool) (int, err
 		if err != nil {
 			return count, fmt.Errorf("settlement: EnqueuePayoutNotifications: marshal payload: %w", err)
 		}
-		_, err = db.Exec(ctx, `
-			INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload)
-			VALUES ('settlement.paid', 'settlement_batch', $1, $2)
-		`, b.id, payload)
+		// FIX (incident 2026-08-21): the scan above is only a candidate list.
+		// Check-then-insert let two processes that scanned at the same time
+		// both insert settlement.paid. Claim the batch atomically first: the
+		// UPDATE takes the row lock, a concurrent claimer waits, then
+		// re-checks paid_notified_at IS NULL and matches 0 rows. Claim and
+		// outbox insert commit together, so a crash cannot lose or double it.
+		inserted, err := claimAndEnqueuePaid(ctx, db, b.id, payload)
 		if err != nil {
 			return count, fmt.Errorf("settlement: EnqueuePayoutNotifications: insert batch %s: %w", b.id, err)
 		}
-		count++
+		if inserted {
+			count++
+		}
 	}
 	return count, nil
+}
+
+func claimAndEnqueuePaid(ctx context.Context, db *pgxpool.Pool, batchID uuid.UUID, payload []byte) (bool, error) {
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	tag, err := tx.Exec(ctx, `
+		UPDATE settlement_batches SET paid_notified_at = now()
+		 WHERE id = $1 AND paid_notified_at IS NULL
+	`, batchID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil // another process already notified this batch
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO outbox_events (event_type, aggregate_type, aggregate_id, payload)
+		VALUES ('settlement.paid', 'settlement_batch', $1, $2)
+	`, batchID, payload); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
 }

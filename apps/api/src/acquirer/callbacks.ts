@@ -37,7 +37,12 @@ export async function applyAcquirerCallback(pool: Pool, callback: AcquirerCallba
   await pool.query(
     `INSERT INTO acquirer_callback_notes
         (transaction_id, merchant_id, callback_id, callback_type, outcome, note, received_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (callback_id) DO NOTHING`,
+    // FIX (FP-201): a redelivered callback (same callbackId) used to insert a
+    // second identical note. Migration 0075 makes callback_id unique; a
+    // repeat is now a no-op and still answers 200 so the acquirer stops
+    // retrying. Check-then-insert in code would race; the constraint cannot.
     [
       callback.transactionId,
       txnRow.merchant_id,

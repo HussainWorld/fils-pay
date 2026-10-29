@@ -13,9 +13,21 @@ import { pathToFileURL } from "node:url";
 import { Client } from "pg";
 import { formatBhd, toFils } from "@filspay/money";
 
+// FIX (window): this used the UTC calendar month. March's scheme lines come
+// from batches, and batches are Asia/Bahrain business days (ARCHITECTURE,
+// HANDOVER: "must use the Bahrain month, not a UTC month"). A UTC window
+// misses Bahrain 1 March 00:00-03:00 (still 28 Feb in UTC) and wrongly takes
+// Bahrain 1 April 00:00-03:00. Bahrain is fixed UTC+3 with no DST, so the
+// Bahrain month is the UTC month shifted back 3 hours.
+const BAHRAIN_OFFSET_MS = 3 * 60 * 60 * 1000;
 export function monthBounds(year: number, month: number): { start: Date; end: Date } {
-  return { start: new Date(Date.UTC(year, month - 1, 1)), end: new Date(Date.UTC(year, month, 1)) };
+  return {
+    start: new Date(Date.UTC(year, month - 1, 1) - BAHRAIN_OFFSET_MS),
+    end: new Date(Date.UTC(year, month, 1) - BAHRAIN_OFFSET_MS),
+  };
 }
+
+const SWEEP_DESCRIPTION = "March 2026 scheme rounding residue sweep — manual recon per finance";
 
 export interface ResidueRow {
   merchantId: string;
@@ -68,16 +80,20 @@ function groupByMerchant(rows: ResidueRow[]): MerchantResidue[] {
   return [...byMerchant.values()];
 }
 
-// am: re-running is safe, entry_group_id dedupes it
+// FIX (legs): the residue was taken out of the merchant (debit
+// merchant_payable), so every sweep lowered what we owe merchants for a
+// rounding gap that is between us and the scheme. ADR-0002 defines the
+// posting: credit card_scheme_clearing (the scheme pays us less than the
+// gross we booked at capture), debit scheme_rounding_residue (suspense that
+// finance clears against the scheme statement). The merchant is not touched.
 async function postResidueCorrection(client: Client, merchant: MerchantResidue, now: Date): Promise<void> {
   if (merchant.residueFils <= 0) return;
-  const entryGroupId = randomUUID();
-  const description = "March 2026 scheme rounding residue sweep — manual recon per finance";
+  const entryGroupId = randomUUID(); // a fresh id every run: this never deduplicated anything
   await client.query(
     `INSERT INTO ledger_entries (entry_group_id, merchant_id, account_id, direction, amount_fils, occurred_at, description)
-     VALUES ($1, $2, 'merchant_payable', 'debit', $3, $4, $5),
-            ($1, $2, 'scheme_rounding_residue', 'credit', $3, $4, $5)`,
-    [entryGroupId, merchant.merchantId, merchant.residueFils, now.toISOString(), description],
+     VALUES ($1, $2, 'scheme_rounding_residue', 'debit', $3, $4, $5),
+            ($1, $2, 'card_scheme_clearing', 'credit', $3, $4, $5)`,
+    [entryGroupId, merchant.merchantId, merchant.residueFils, now.toISOString(), SWEEP_DESCRIPTION],
   );
 }
 
@@ -105,6 +121,21 @@ async function main(): Promise<void> {
 
     await client.query("BEGIN");
     try {
+      // FIX (finance memo: "ran it twice and the gap doubled"): nothing
+      // stopped a second run. The "entry_group_id dedupes it" note was
+      // wrong, since the id is a new random UUID per run. Now: take a
+      // transaction-scoped advisory lock (two concurrent runs serialize) and
+      // stop if this sweep's entries already exist, so running it again is a
+      // no-op instead of a second posting.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('reconcile_march_2026_03'))`);
+      const already = await client.query(`SELECT 1 FROM ledger_entries WHERE description = $1 LIMIT 1`, [
+        SWEEP_DESCRIPTION,
+      ]);
+      if (already.rowCount !== 0) {
+        await client.query("ROLLBACK");
+        console.log("already applied: March 2026 sweep entries exist, nothing posted");
+        return;
+      }
       for (const merchant of merchantResidues) {
         await postResidueCorrection(client, merchant, now);
         console.log(

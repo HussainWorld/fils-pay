@@ -216,13 +216,61 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		batchGross += grossForTxn
 		batchFee += feeForTxn
 	}
+	// FP-300: refunds come out of the payout. A refund already debited
+	// merchant_payable (and credited back the reversed fee) in the ledger
+	// when it happened; the batch has to net it too, or the merchant is paid
+	// for a sale that was given back. Claim this merchant's not-yet-batched
+	// refunds up to the end of this business day (earlier ones included, so
+	// nothing is ever skipped), oldest first, as long as the payout stays
+	// >= 0; anything that does not fit carries to the next day's batch.
+	captureGross := batchGross
+	refundRows, err := tx.Query(ctx, `
+		SELECT id, amount_fils, fee_reversed_fils
+		  FROM refunds
+		 WHERE merchant_id = $1 AND status = 'succeeded'
+		   AND settlement_batch_id IS NULL
+		   AND occurred_at < $2
+		 ORDER BY occurred_at, id
+		 FOR UPDATE
+	`, merchantID, end)
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: select refunds: %w", err)
+	}
+	type refundRow struct {
+		id                  uuid.UUID
+		amount, feeReversed money.Fils
+	}
+	var pendingRefunds []refundRow
+	for refundRows.Next() {
+		var r refundRow
+		var amount, feeReversed int64
+		if err := refundRows.Scan(&r.id, &amount, &feeReversed); err != nil {
+			refundRows.Close()
+			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: scan refund: %w", err)
+		}
+		r.amount, r.feeReversed = money.Fils(amount), money.Fils(feeReversed)
+		pendingRefunds = append(pendingRefunds, r)
+	}
+	refundRows.Close()
+	if err := refundRows.Err(); err != nil {
+		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: iterate refunds: %w", err)
+	}
+	var refundIDs []uuid.UUID
+	for _, r := range pendingRefunds {
+		if NetPayableFils(batchGross-r.amount, batchFee-r.feeReversed) < 0 {
+			break // keep order: this and later refunds wait for the next batch
+		}
+		batchGross -= r.amount
+		batchFee -= r.feeReversed
+		refundIDs = append(refundIDs, r.id)
+	}
 	netPayout := NetPayableFils(batchGross, batchFee)
 
 	// Record this batch's contribution to the platform-wide lifetime
 	// processed-volume counter, in the same transaction that freezes this
 	// batch's own totals — so the counter and the batch it describes
 	// commit or roll back together.
-	if err := RecordPlatformProcessedVolume(ctx, tx, platformProcessedFils, int64(batchGross)); err != nil {
+	if err := RecordPlatformProcessedVolume(ctx, tx, platformProcessedFils, int64(captureGross)); err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: record platform volume: %w", err)
 	}
 
@@ -247,12 +295,27 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		}
 	}
 
+	if len(refundIDs) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE refunds SET settlement_batch_id = $2 WHERE id = ANY($1)`, refundIDs, batchID); err != nil {
+			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: mark refunds batched: %w", err)
+		}
+	}
+
 	for i, line := range lines {
 		truncated := TruncateToSchemeAmount(line.grossFils)
+		// FIX (finance memo: "scheme file total is always a few fils over,
+		// never under"): `amount` (the value written to the scheme file) was
+		// SchemeAmountBD(line.grossFils): the UNtruncated gross as a float,
+		// which Postgres NUMERIC(10,2) then ROUNDS half-up on assignment.
+		// So 4.755 BD went out as 4.76 while amount_fils recorded 4.750.
+		// Rounding can only land >= truncation, so the file was always over
+		// what the ledger and the residue posting assume. ADR-0002: the file
+		// amount must be exactly amount_fils/1000 to 2dp, so format the
+		// already-truncated integer (no float involved at all).
 		_, err = tx.Exec(ctx, `
 			INSERT INTO scheme_export_lines (settlement_batch_id, transaction_id, amount_fils, amount, line_sequence)
 			VALUES ($1, $2, $3, $4, $5)
-		`, batchID, line.transactionID, int64(truncated), SchemeAmountBD(line.grossFils), i+1)
+		`, batchID, line.transactionID, int64(truncated), formatFilsAsTwoDecimalString(truncated), i+1)
 		if err != nil {
 			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: insert scheme export line: %w", err)
 		}

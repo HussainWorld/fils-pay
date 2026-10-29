@@ -2,7 +2,6 @@ import type { FastifyInstance } from "fastify";
 import { requireAdminRole, requireAdminSession } from "../adminAuth/middleware.js";
 import { insertAdminAuditLog } from "../adminAudit/log.js";
 import { merchantExists, UUID_RE } from "../admin/merchants.js";
-import { reconcileSandboxFlag } from "../admin/merchantFlags.js";
 import { recomputeTransactionStatusesForMerchant } from "../admin/transactionStatusRecompute.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { NotFoundError, UnauthorizedError } from "../lib/errors.js";
@@ -25,7 +24,15 @@ export async function adminMerchantsRecomputeRoutes(app: FastifyInstance): Promi
 
       const result = await withTransaction(app.db, async (client) => {
         const recompute = await recomputeTransactionStatusesForMerchant(client, request.params.id);
-        const flagsUpdated = await reconcileSandboxFlag(client, request.params.id, recompute);
+        // FIX (group chat: "test merchants keep showing up in the real
+        // settlement run"): this called reconcileSandboxFlag, which set
+        // merchants.test_mode = false for any merchant with no open
+        // authorizations. So pressing "Recompute statuses" on a sandbox
+        // merchant quietly turned it live, and the next daily batch
+        // (RunDailyBatch / CloseBatch select test_mode = false) settled its
+        // test transactions as real money. A status recompute must only
+        // recompute statuses; going live is a deliberate onboarding/KYC step.
+        const flagsUpdated: string[] = [];
         await insertAdminAuditLog(client, {
           adminUserId: adminAuth.adminUserId,
           action: "transaction_status_recompute",

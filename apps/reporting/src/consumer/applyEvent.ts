@@ -144,11 +144,18 @@ async function applyBatchClosed(client: PoolClient, row: OutboxEventRow): Promis
       `SELECT captured_count FROM merchant_daily_volume WHERE merchant_id = $1 AND volume_date = $2`,
       [payload.merchantId, payload.batchDate],
     );
-    const rollup = rollupResult.rows[0] as { captured_count: number };
-    if (rollup.captured_count < groundTruthCount) {
+    // FIX: when the rollup has NO row for that merchant/day yet (captures
+    // posted without an outbox event, e.g. seeded/backfilled data, or a
+    // batch_closed applied before its captures) rows[0] is undefined and
+    // `rollup.captured_count` threw a TypeError. A throw rolls back the whole
+    // pass, the watermark never advances, and the same event fails again on
+    // every pass: reporting stops for EVERY merchant, permanently, over a
+    // check whose whole job is only to log a warning. Treat a missing row as 0.
+    const rollup = rollupResult.rows[0] as { captured_count: number } | undefined;
+    if ((rollup?.captured_count ?? 0) < groundTruthCount) {
       console.warn(
         `reporting rollup lags ground truth for merchant ${payload.merchantId} on ${payload.batchDate}: ` +
-          `rollup=${rollup.captured_count} ground_truth=${groundTruthCount}`,
+          `rollup=${rollup?.captured_count ?? 0} ground_truth=${groundTruthCount}`,
       );
     }
   }
@@ -167,7 +174,11 @@ export async function applyDailySummaryRollup(
   occurredAt: Date,
   amountFils: number,
 ): Promise<void> {
-  const summaryDate = occurredAt.toISOString().slice(0, 10);
+  // FIX: was occurredAt.toISOString().slice(0, 10), the UTC date. Every
+  // other rollup in this file buckets by the Asia/Bahrain business day
+  // (toBahrainDateString), so a refund at 01:00 Bahrain landed on the
+  // previous day's row, next to the wrong day's captures.
+  const summaryDate = toBahrainDateString(occurredAt);
   await client.query(
     `INSERT INTO merchant_daily_volume (merchant_id, volume_date, refund_count, refund_gross_fils, last_updated_at)
      VALUES ($1, $2, 1, $3, now())
@@ -196,6 +207,11 @@ export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promi
       return applyTransactionVoided(client, row);
     case "settlement.batch_closed":
       return applyBatchClosed(client, row);
+    // FP-300: refunds roll up into the same per-day row as captures.
+    case "refund.succeeded": {
+      const payload = row.payload as { merchantId: string; amountFils: number };
+      return applyDailySummaryRollup(client, payload.merchantId, row.created_at, Number(payload.amountFils));
+    }
     default:
       throw new Error(`applyEvent: unhandled event_type ${row.event_type}`);
   }

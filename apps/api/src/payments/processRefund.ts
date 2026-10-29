@@ -48,8 +48,21 @@ export async function processRefund(
     reason: input.reason ?? null,
   });
 
+  // FIX (FP-209 "two refund requests at the same time both went through"):
+  // the refund ran as three separate steps: (1) read + validate in one
+  // transaction with NO row lock, (2) call the acquirer outside any
+  // transaction, (3) journal in a second transaction, writing
+  // refunded_fils = <value read in step 1> + amount. Two concurrent
+  // requests both read refunded_fils = 0, both passed validation, the
+  // acquirer paid out twice, and the second write even overwrote the first
+  // (lost update), so the ledger did not show it. capture.ts does not have
+  // this problem because it holds SELECT ... FOR UPDATE on the transaction
+  // row for the whole flow, acquirer call included. Refunds now do the same:
+  // one transaction, row locked from validation to journal, so a concurrent
+  // refund waits and then validates against the updated refunded_fils.
+  return withTransaction(pool, async (client) => {
   // 1 validate
-  const prepared = await withTransaction(pool, async (client) => {
+  const prepared = await (async () => {
     const claim = await claimIdempotencyKey(client, {
       merchantId: input.merchantId,
       endpoint: ENDPOINT,
@@ -70,11 +83,15 @@ export async function processRefund(
       };
     }
 
+    // FIX: lock the row (see above) and scope it to the caller's merchant.
+    // It was `WHERE id = $1` only, so any merchant could refund any other
+    // merchant's transaction by id (IDOR) and debit that merchant's payable.
     const txnResult = await client.query<RefundTransactionRow>(
       `SELECT id, merchant_id, status, amount_fils, captured_fils, refunded_fils, acquirer_reference
          FROM transactions
-        WHERE id = $1`,
-      [input.transactionId],
+        WHERE id = $1 AND merchant_id = $2
+        FOR UPDATE`,
+      [input.transactionId, input.merchantId],
     );
     const txn = txnResult.rows[0];
     if (!txn) {
@@ -87,7 +104,12 @@ export async function processRefund(
     const capturedFils = toFils(Number(txn.captured_fils));
     const refundedFils = toFils(Number(txn.refunded_fils));
 
-    const refundableFils = subtractFils(amountAuthorized, refundedFils);
+    // FIX (note: "can you refund more than what was actually charged?"):
+    // this was amountAuthorized - refundedFils. On a partial capture (auth
+    // 10.000, captured 4.000) a merchant could refund up to 10.000 BD, i.e.
+    // 6.000 BD that was never taken from the card. Only captured money can
+    // go back.
+    const refundableFils = subtractFils(capturedFils, refundedFils);
 
     const validation = validateRefundRequest(
       {
@@ -110,12 +132,16 @@ export async function processRefund(
     // the ledger rather than recomputed from the merchant's current
     // mdr_bps, so a rate change after capture can never retroactively alter
     // what a refund reverses.
+    // FP-300: the NET fee charged = capture fee credits minus any legacy
+    // negotiated-discount adjustments (debits posted by the old post-capture
+    // discount step). Prior refund reversals are excluded on purpose: the
+    // reversal below is computed cumulatively against the original fee.
     const feeResult = await client.query<{ fee_fils: string }>(
-      `SELECT COALESCE(SUM(amount_fils), 0)::text AS fee_fils
+      `SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_fils ELSE -amount_fils END), 0)::text AS fee_fils
          FROM ledger_entries
         WHERE transaction_id = $1
           AND account_id = 'platform_fee_revenue'
-          AND direction = 'credit'`,
+          AND (direction = 'credit' OR description = 'capture: negotiated discount adjustment')`,
       [txn.id],
     );
     const feeRow = feeResult.rows[0];
@@ -136,7 +162,7 @@ export async function processRefund(
       feeChargedFils: toFils(Number(feeRow.fee_fils)),
       requestedAmount: validation.amountFils,
     };
-  });
+  })();
 
   if (prepared.kind === "settled") {
     return prepared.result;
@@ -149,8 +175,8 @@ export async function processRefund(
     idempotencyKey: `${prepared.claimId}:${prepared.attemptCount}`,
   });
 
-  // 3 journal
-  return withTransaction(pool, async (client) => {
+  // 3 journal (same transaction, row still locked)
+  return (async () => {
     if (acquirerResult.outcome === "declined") {
       const body = { error: "refund_declined" };
       await completeIdempotencyKey(client, prepared.claimId, { statusCode: 402, body });
@@ -168,10 +194,14 @@ export async function processRefund(
       capturedFils: prepared.capturedFils,
       refundedTotalFils: newRefundedTotal,
     });
-    const feeReversedFils = calculateRefundFee(
-      prepared.capturedFils,
-      prepared.feeChargedFils,
-      prepared.requestedAmount,
+    // FP-300: reverse the fee cumulatively. Rounding each partial refund's
+    // share on its own does not sum back to the fee charged (fee 119 refunded
+    // in three thirds = 40 + 40 + 40 = 120: one fil more than was ever
+    // charged). Reversal = share(total refunded after) - share(before), which
+    // telescopes to exactly the fee when the whole capture is refunded.
+    const feeReversedFils = subtractFils(
+      calculateRefundFee(prepared.capturedFils, prepared.feeChargedFils, newRefundedTotal),
+      calculateRefundFee(prepared.capturedFils, prepared.feeChargedFils, prepared.refundedFils),
     );
 
     const refundResult = await client.query<{ id: string; occurred_at: Date }>(
@@ -186,7 +216,10 @@ export async function processRefund(
         prepared.requestedAmount,
         feeReversedFils,
         acquirerResult.acquirerReference,
-        input.reason ?? null,
+        // FIX: an explicit NULL bypasses the column DEFAULT and violates
+        // chk_refunds_reason_not_null (migration 0070), so every refund
+        // without a reason failed after the acquirer had already paid out.
+        input.reason ?? "unspecified",
         input.actor.type,
         input.actor.id,
       ],
@@ -274,5 +307,6 @@ export async function processRefund(
       resourceId: refund.id,
     });
     return { statusCode: 200, body };
+  })();
   });
 }

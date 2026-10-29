@@ -89,7 +89,16 @@ export async function lookupSession(
     `SELECT s.id AS session_id, s.merchant_user_id, mu.merchant_id, mu.role
        FROM live_sessions s
        JOIN merchant_users mu ON mu.id = s.merchant_user_id
-      WHERE s.token_hash = $1`,
+      WHERE s.token_hash = $1
+        AND s.authenticated = true`,
+    // FIX (group chat: "login works without entering the OTP code"): this
+    // read live_sessions, a view that filters revoked/expired rows but NOT
+    // pending ones, and never checked `authenticated`. The cookie set by
+    // POST /login after the password step (authenticated = false) was
+    // therefore accepted by requireMerchantAuth/requireSession on every
+    // merchant route, so the OTP step could simply be skipped.
+    // ARCHITECTURE: "The pending session grants nothing until the OTP is
+    // verified". The admin plane's lookup already has this exact predicate.
     [tokenHash],
   );
   const row = result.rows[0];

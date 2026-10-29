@@ -26,8 +26,12 @@ export async function recomputeTransactionStatusesForMerchant(
   const candidates = await client.query<CandidateRow>(
     `SELECT id, status, amount_fils, captured_fils, refunded_fils
        FROM transactions
-      WHERE merchant_id = $1 AND status NOT IN ('authorized', 'voided')
+      WHERE merchant_id = $1 AND status NOT IN ('authorized', 'voided', 'chargeback')
       FOR UPDATE`,
+    // FIX: 'chargeback' was not excluded, so a recompute ran it through
+    // nextStatusAfterRefund (which only knows capture/refund statuses) and
+    // silently overwrote a disputed transaction back to 'captured'. A
+    // chargeback is not derived from the money columns; leave it alone.
     [merchantId],
   );
 

@@ -265,7 +265,18 @@ func handleRunBatch(pool *pgxpool.Pool) http.Handler {
 // action. Takes no body; any body sent is ignored.
 func handleRebuildBalances(pool *pgxpool.Pool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		diffs, err := ledger.RefreshBalanceCache(r.Context(), pool)
+		// FIX (finance memo: "Rebuild balances turned 135K into 7K"): the
+		// button called ledger.RefreshBalanceCache, which reads the
+		// merchant_payable_position view. That view is SUM(scheme_export_lines
+		// .amount_fils): the gross (truncated) amount of lines already
+		// exported, which is not what we owe the merchant at all. It ignores
+		// fees, unbatched captures, payouts, refunds and adjustments, so it
+		// overwrote every cached balance with an unrelated number. The CLI
+		// (`settlement rebuild-balances`) walks ledger_entries, which is the
+		// source of truth (ARCHITECTURE: "the console's button triggers the
+		// same refresh"; HANDOVER: "there shouldn't be one that reads anything
+		// else"). Use the exact same function as the CLI.
+		diffs, err := ledger.RebuildAllBalances(r.Context(), pool)
 		if err != nil {
 			log.Printf("settlement internal api: rebuild-balances failed: %v", err)
 			writeJSON(w, http.StatusInternalServerError, errorResponse{Error: "rebuild_balances_failed"})
