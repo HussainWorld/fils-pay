@@ -115,6 +115,52 @@ Status: **Fixed** · **Open**.
 
 ---
 
+## Found after the tickets were done
+
+### H-1. The nightly hold janitor could delete every hold — Fixed
+- **What:** `scripts/expire_holds.ts` selected the expired hold ids, then ran
+  `buildDelete("holds", { id: ids })`. `lib/sqlFilter.buildWhere` skipped an
+  *empty* array, so on a night with nothing expired the statement was
+  `DELETE FROM holds`, with no WHERE. The doc comment claimed "a night with
+  nothing expired changes no rows".
+- **Why else it was wrong:** HANDOVER says holds are flipped to `expired` with
+  one UPDATE and never deleted. And a hold captured between the SELECT and the
+  DELETE was deleted anyway ("negligible window, fine").
+- **Breaks:** the first quiet night wipes the whole authorization-hold history
+  (captured and released holds included). The old tests only asserted the
+  DELETE's text, so they locked in the deletion and never covered the empty case.
+- **Fix:** one atomic `UPDATE holds SET status = 'expired' WHERE status = 'active'
+  AND expires_at < now()`. `buildWhere` treats an empty list as `FALSE`, and
+  `buildDelete` refuses to emit an unscoped DELETE. The tests now assert the
+  behaviour (`scripts/expire_holds.test.ts`).
+
+### K-1. KYC "PDF-only" documents were checked by filename only — Fixed
+- **What:** commercial registrations and bank letters must be PDFs, but
+  `recordKycDocument` only checked `fileName.endsWith(".pdf")`. The magic-byte
+  type was already computed and ignored. MK's "fixed in FP-231" was not true
+  for this path.
+- **Breaks:** a phone photo (JPEG/PNG) named `CR.pdf` was accepted as a
+  registration certificate and stored as an image, so the reviewer approves
+  KYC on a document type the policy forbids.
+- **Fix:** the bytes must be a PDF too; the existing filename rule stays
+  (`apps/api/src/onboarding/kyc.ts`, `kyc.fix.test.ts`).
+
+### A-1. The same finance adjustment sheet could be applied twice — Fixed
+- **What:** nothing stopped a second upload of an identical CSV. Huda asked for
+  a guard (finance/eng 2026-07-08); FH asked on 14/8 with no answer. The
+  comment "re-upload is blocked by the unique original_filename" was wrong:
+  no such constraint exists, and a filename doesn't identify content anyway.
+- **Breaks:** a double-click, a retry after a timeout, or two people working the
+  same email posts every ledger adjustment and balance-cache change again.
+- **Fix:** each import stores a SHA-256 fingerprint of its rows, unique in the
+  database (migration 0079), so an identical second import, even a concurrent
+  one, gets 409 `adjustment_import_already_applied` and posts nothing.
+  Existing imports are backfilled with the same formula, so re-uploading a
+  sheet applied before the fix is caught too. A sheet with any different
+  row is still accepted (`adjustmentImport.fix.test.ts`).
+
+---
+
 ## Refund IDs used in the Hussain branch → AUDIT-FIXES
 
 Both branches implemented FP-300 independently and found the same bugs. The
