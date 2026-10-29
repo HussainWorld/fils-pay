@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { withTransaction } from "../db/withTransaction.js";
 import { decodeEncryptionKey, decryptSecret } from "./secretCrypto.js";
 import { signPayload } from "./sign.js";
+import { canonicalJson } from "../payments/idempotency.js";
 import { buildEnvelope } from "./envelope.js";
 import { recordPayoutDisbursementEffect } from "./payoutDisbursement.js";
 import { WEBHOOK_DELIVERY_ID_HEADER, WEBHOOK_SIGNATURE_HEADER } from "./headers.js";
@@ -22,12 +23,12 @@ import type { WebhookTransport } from "./transport.js";
 
 const STEP_A_BATCH_LIMIT = 500;
 const STEP_B_BATCH_LIMIT = 100;
-// add refund.succeeded here when refunds ship, thats all it needs — am
 // YA: adding a type here without a buildEnvelope case throws in Step A and stalls the whole queue. envelope.ts first.
 // MK: settlement.batch_closed taken out of this list in Feb (too noisy). docs still mention it
 const WEBHOOK_ELIGIBLE_EVENT_TYPES: readonly string[] = [
   "transaction.captured",
   "transaction.voided",
+  "refund.succeeded", // FIX R-8: was missing, so shops never got a refund webhook (envelope case added first)
   "settlement.paid",
 ];
 const NOTIFY_CHANNEL = "outbox_events_channel";
@@ -155,6 +156,10 @@ async function attemptOneDelivery(
 ): Promise<void> {
   const key = decodeEncryptionKey(config.webhookSecretEncryptionKey);
   const secret = decryptSecret(row.secret_ciphertext, key);
+  // FIX R-9 (FP-240): the signature covered canonicalJson(payload) (sorted keys) but the body sent was
+  // JSON.stringify(payload) in jsonb's own key order, so a merchant verifying the raw bytes they received
+  // (the standard way) got a mismatch. Send exactly the canonical string that was signed.
+  const body = canonicalJson(row.payload);
   const { signature } = signPayload(row.payload, secret);
 
   if (row.attempt_count === 0) {
@@ -169,7 +174,7 @@ async function attemptOneDelivery(
       [WEBHOOK_DELIVERY_ID_HEADER]: row.delivery_event_id,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(row.payload),
+    body, // FIX R-9: the signed bytes, not a re-serialization
     timeoutMs: config.webhookRequestTimeoutMs,
   });
 
