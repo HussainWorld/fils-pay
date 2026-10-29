@@ -13,6 +13,8 @@ export interface SettlementBatchDto {
   netPayoutFils: number;
   closedAt: string | null;
   paidAt: string | null;
+  refundedFils: number; // FIX R-11: refunds deducted in this batch
+  feeReversedFils: number; // FIX R-11: MDR given back on those refunds
 }
 
 /** batch_date is a DATE; pg parses it in the process's local timezone (see toBatchDateString). */
@@ -23,6 +25,8 @@ interface SettlementBatchRow {
   gross_fils: string | number;
   fee_fils: string | number;
   net_payout_fils: string | number;
+  refunded_fils: string | number;
+  fee_reversed_fils: string | number;
   closed_at: Date | null;
   paid_at: Date | null;
 }
@@ -49,7 +53,7 @@ function toBatchDateString(d: Date): string {
 
 /**
  * Maps a settlement_batches row to its DTO. Invariant (enforced by the Go
- * worker at close): netPayoutFils === grossFils - feeFils for every batch.
+ * worker at close): netPayoutFils === grossFils - feeFils - refundedFils + feeReversedFils.
  */
 function serializeBatch(row: SettlementBatchRow): SettlementBatchDto {
   return {
@@ -59,6 +63,8 @@ function serializeBatch(row: SettlementBatchRow): SettlementBatchDto {
     grossFils: Number(row.gross_fils),
     feeFils: Number(row.fee_fils),
     netPayoutFils: Number(row.net_payout_fils),
+    refundedFils: Number(row.refunded_fils), // FIX R-11
+    feeReversedFils: Number(row.fee_reversed_fils), // FIX R-11
     closedAt: row.closed_at ? row.closed_at.toISOString() : null,
     paidAt: row.paid_at ? row.paid_at.toISOString() : null,
   };
@@ -117,7 +123,7 @@ export async function listSettlementBatches(
   const decodedCursor = decodeCursor(filters.cursor);
 
   const result = await pool.query<SettlementBatchRow>(
-    `SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils, closed_at, paid_at
+    `SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils, refunded_fils, fee_reversed_fils, closed_at, paid_at
        FROM settlement_batches
       WHERE merchant_id = $1
         AND ($2::date IS NULL OR batch_date >= $2)
@@ -166,7 +172,7 @@ export async function getSettlementBatch(
   input: { merchantId: string; batchId: string },
 ): Promise<SettlementBatchDetailDto | null> {
   const batchResult = await pool.query<SettlementBatchRow>(
-    `SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils, closed_at, paid_at
+    `SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils, refunded_fils, fee_reversed_fils, closed_at, paid_at
        FROM settlement_batches WHERE id = $1 AND merchant_id = $2`,
     [input.batchId, input.merchantId],
   );
@@ -285,7 +291,7 @@ export async function getReconciliationReport(
   const windowStart = bahrainLocalMidnightUtc(input.from);
   const windowEnd = bahrainLocalMidnightUtc(input.to);
 
-  const [ledgerResult, settlementResult, pendingResult, merchantResult] = await Promise.all([
+  const [ledgerResult, settlementResult, pendingResult, merchantResult, pendingRefundResult] = await Promise.all([
     pool.query<{ net: string }>(
       `SELECT COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_fils ELSE -amount_fils END), 0) AS net
          FROM ledger_entries
@@ -313,6 +319,15 @@ export async function getReconciliationReport(
       `SELECT mdr_bps, negotiated_discount_bps FROM merchants WHERE id = $1`,
       [input.merchantId],
     ),
+    // FIX R-12: the doc comment above claimed refunds were "included in pending", but nothing selected
+    // them, so every refund awaiting its batch showed up as an unexplained gap.
+    pool.query<{ net: string }>(
+      `SELECT COALESCE(SUM(amount_fils - fee_reversed_fils), 0) AS net
+         FROM refunds
+        WHERE merchant_id = $1 AND status = 'succeeded' AND settlement_batch_id IS NULL
+          AND occurred_at >= $2 AND occurred_at < $3`,
+      [input.merchantId, windowStart, windowEnd],
+    ),
   ]);
 
   // MK: merchants.mdr_bps is kept in sync with the current fee_schedules row by the 0046 trigger,
@@ -328,6 +343,7 @@ export async function getReconciliationReport(
     pendingUnbatchedFils += amountFils - feeFils;
   }
 
+  pendingUnbatchedFils -= Number(pendingRefundResult.rows[0]?.net ?? 0); // FIX R-12: refunds reduce what is pending
   const ledgerMerchantPayableNetFils = Number(ledgerResult.rows[0]?.net ?? 0);
   const settlementNetPayoutFils = Number(settlementResult.rows[0]?.total ?? 0);
   const gapFils = ledgerMerchantPayableNetFils - settlementNetPayoutFils - pendingUnbatchedFils;
