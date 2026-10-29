@@ -7,7 +7,13 @@ export function buildWhere(
   for (const [col, val] of Object.entries(filters)) {
     if (val === undefined || val === null) continue;
     if (Array.isArray(val)) {
-      if (val.length === 0) continue;
+      // FIX H-1: an empty list was skipped (`continue`), silently turning "id is one of nothing" into
+      // "no filter at all" — buildDelete("holds", { id: [] }) produced `DELETE FROM holds`. An empty
+      // list matches no rows.
+      if (val.length === 0) {
+        parts.push("FALSE");
+        continue;
+      }
       values.push(val);
       parts.push(`${col} = ANY($${idx}::uuid[])`);
       idx++;
@@ -26,5 +32,7 @@ export function buildDelete(
   filters: Record<string, unknown>,
 ): { text: string; values: unknown[] } {
   const { clause, values } = buildWhere(filters);
+  // FIX H-1: never emit an unscoped DELETE; a caller with no filters gets an error, not an empty table.
+  if (clause === "") throw new Error(`buildDelete: refusing to DELETE FROM ${table} without a WHERE clause`);
   return { text: `DELETE FROM ${table} ${clause}`.trim(), values };
 }
