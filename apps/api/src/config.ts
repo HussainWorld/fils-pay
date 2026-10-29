@@ -150,7 +150,10 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   return value === "true" || value === "1";
 }
 
-const DEV_FALLBACK_WEBHOOK_KEY_B64 = "dGVzdC1rZXktZm9yLWRldi1vbmx5LW5vdC1mb3ItcHJvZA==";
+// FIX D-6: was "dGVzdC1rZXktZm9yLWRldi1vbmx5LW5vdC1mb3ItcHJvZA==", which decodes to 34 bytes; the validator
+// below requires exactly 32 (AES-256), so every non-production boot without an explicit key crashed in
+// loadConfig (api in dev, the seed script). Dev/test only: production still requires a real key.
+const DEV_FALLBACK_WEBHOOK_KEY_B64 = "Zmlsc3BheS1kZXYta2V5LW5ldmVyLXByb2R1Y3Rpb24=";
 
 const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 

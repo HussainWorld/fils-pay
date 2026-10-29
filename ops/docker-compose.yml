@@ -57,8 +57,8 @@ services:
     command: ["npm", "run", "seed"]
     environment:
       DATABASE_URL: *database-url
-      # FIX D-6: the seed calls the api's loadConfig(); its built-in dev key decodes to 34 bytes
-      # (32 required), so it crashed. Pass the same real key the api uses.
+      # FIX D-6: the seed calls the api's loadConfig(); the built-in dev key used to be 34 bytes and crashed
+      # it (fixed in config.ts). The seed still gets the same real key the api uses.
       WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh}
     depends_on:
       postgres:
@@ -78,7 +78,7 @@ services:
       DATABASE_URL: *database-url
       SETTLEMENT_INTERNAL_URL: http://settlement:8091
       SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/gen-env.sh} # FIX D-2: required in production, was never set
-      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh} # FIX D-6: always set; the dev fallback is invalid
+      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh} # FIX D-6: always a real key outside dev
       ACQUIRER_CALLBACK_SIGNING_SECRET: ${ACQUIRER_CALLBACK_SIGNING_SECRET:?run ops/gen-env.sh} # FIX D-3: was committed in .env.docker
       # Manaf's #21 (FP-240 inbound): unsigned acquirer callbacks are rejected only when this is on.
       ACQUIRER_CALLBACK_REQUIRE_SIGNATURE: "true"

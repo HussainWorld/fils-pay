@@ -44,7 +44,7 @@ jobs:
       PGHOST: localhost
       PGUSER: filspay
       PGPASSWORD: filspay
-      # Test-only key (tests also pass their own); the built-in dev fallback is invalid (FINDINGS D-6).
+      # Test-only key (tests also pass their own), so CI never relies on the built-in dev fallback (FINDINGS D-6).
       WEBHOOK_SECRET_ENCRYPTION_KEY: Y1ZTGTcYbe30GZJebys9w7T3OYZNKewuOH3SUCEdRQk=
     steps:
       - uses: actions/checkout@v4
