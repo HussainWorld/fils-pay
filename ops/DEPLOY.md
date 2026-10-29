@@ -1,72 +1,61 @@
 # Deploying FilsPay to Dilmune Cloud
 
-Everything runs from one compose file, `ops/docker-compose.prod.yml`:
-Postgres (private), api, settlement daemon, reporting worker, and an nginx
-container that serves the merchant dashboard on **:80** and the admin console
-on **:8081**, proxying `/v1` to the api (same origin, no CORS needed).
+One compose file, `ops/docker-compose.yml`: Postgres (loopback only), api,
+settlement daemon, reporting worker, and an nginx `proxy` that serves the
+merchant dashboard at `/` and the admin console at `/admin/`, proxying `/v1`
+to the api (same origin, no CORS). Only the proxy is published, on
+`PUBLIC_PORT` (80 on the server). Dilmune's firewall opens 22/80/443 only.
 
-## 1. Get the code onto the box
+Live demo: http://139.59.57.131 (Dilmune server `stormy-tiger`, Ubuntu 24.04,
+2 GB RAM, 50 GB disk, user `dilmune`).
 
-```bash
-git clone https://github.com/HussainWorld/fils-pay.git && cd fils-pay
-git checkout manaf
-```
-
-(or `scp`/upload the folder; `node_modules` and `dist` are not needed)
-
-## 2. Secrets
+## 1. Server prerequisites (once)
 
 ```bash
-cp ops/prod.env.example ops/.env.prod
-# fill it in:
-#   POSTGRES_PASSWORD / SETTLEMENT_INTERNAL_TOKEN : openssl rand -hex 24
-#   WEBHOOK_SECRET_ENCRYPTION_KEY                 : openssl rand -base64 32
-#   ACQUIRER_CALLBACK_SIGNING_SECRET              : from the acquirer (NOT the one in ops/.env.docker)
-#   COOKIE_SECURE=false only if you serve plain http (no TLS) for the demo
+sudo apt-get install -y docker.io docker-compose-v2 docker-buildx
+sudo usermod -aG docker "$USER"            # log in again afterwards
+# 2 GB RAM: add swap so the image builds don't run out of memory
+sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile && sudo swapon /swapfile
 ```
 
-`ops/.env.prod` is git-ignored. Compose refuses to start if any secret is missing.
-
-## 3. Start
+## 2. Code and secrets
 
 ```bash
-docker compose -f ops/docker-compose.prod.yml --env-file ops/.env.prod up -d --build
-# optional demo data (merchants, API keys printed in the output):
-docker compose -f ops/docker-compose.prod.yml --env-file ops/.env.prod --profile seed run --rm seed
+git clone https://github.com/HussainWorld/fils-pay.git && cd fils-pay && git checkout dev
+ops/gen-env.sh http://<public-host>       # writes the gitignored ops/.env with fresh secrets
+sed -i 's/^PUBLIC_PORT=.*/PUBLIC_PORT=80/' ops/.env
 ```
 
-The box has a 2 GB disk: if the first build runs out of space, run
-`docker builder prune -af` and build again (images use slim bases now).
+`gen-env.sh` refuses to overwrite an existing `ops/.env`: the Postgres password
+is baked into the data volume and the webhook key encrypts stored secrets.
+`COOKIE_SECURE` follows the URL scheme; `OTP_DEV_EXPOSE=true` shows the login
+OTP on screen because no email/SMS sender exists (demo only).
 
-## 4. Check it is live
+## 3. Deploy
 
 ```bash
-curl http://<host>/healthz            # {"status":"ok"}
-curl http://<host>/readyz             # {"status":"ready"}
+ops/deploy.sh --seed     # first time: build, migrate, load demo data, start
+ops/deploy.sh            # afterwards: build, migrate, restart (keeps data)
 ```
 
-- Merchant dashboard: `http://<host>/`
-- Admin console: `http://<host>:8081/`
+`--seed` truncates and regenerates the fixture tables. `deploy.sh` prunes the
+build cache afterwards, and waits for `/readyz` through the proxy.
 
-## 5. Refund smoke test (FP-300) with a seeded API key
+## 4. Check it
 
-```bash
-KEY=fp_live_...    # from the seed output
-TX=$(curl -s http://<host>/v1/transactions -H "authorization: Bearer $KEY" -H "idempotency-key: $(uuidgen)" \
-  -H 'content-type: application/json' \
-  -d '{"amountFils":25000,"card":{"pan":"4242424242424242","expiryMonth":12,"expiryYear":2030,"cvv":"123"}}' | jq -r .id)
-curl -s http://<host>/v1/transactions/$TX/capture -H "authorization: Bearer $KEY" -H "idempotency-key: $(uuidgen)" -H 'content-type: application/json' -d '{}'
-curl -s http://<host>/v1/refunds -H "authorization: Bearer $KEY" -H "idempotency-key: $(uuidgen)" \
-  -H 'content-type: application/json' -d "{\"transactionId\":\"$TX\",\"amountFils\":10000}"
-curl -s http://<host>/v1/transactions/$TX/events -H "authorization: Bearer $KEY"
-```
+- `http://<host>/readyz` → `{"status":"ready"}`
+- Dashboard: `http://<host>/` (`owner@alpharetail.example` / `FilsPaySeed!2026`)
+- Admin: `http://<host>/admin/` (`superadmin@filspay.test` / `FilsPayAdminSeed!2026`)
 
-## What is different from the dev compose file (and why)
+## What differs from the original dev compose file (and why)
 
-| Dev `docker-compose.yml` | Prod |
+| Original | Now |
 |---|---|
-| Postgres published on `5432` with a password committed to git | not published at all |
-| secrets hard-coded / in `ops/.env.docker` (committed) | `ops/.env.prod`, git-ignored, required |
-| no web/admin | nginx serves both, proxies `/v1` |
+| Postgres on `0.0.0.0:5432` with a password committed to git | `127.0.0.1` only, random password |
+| `.env.docker` never loaded; acquirer secret committed in it | `env_file`; secrets in gitignored `ops/.env` |
+| settlement exits at boot (no internal token) | token generated and passed to api + settlement |
+| no web/admin | nginx serves both under one origin |
 | `ACQUIRER_CALLBACK_REQUIRE_SIGNATURE` default false | true |
-| `node:20` (~1 GB bigger) | `node:20-slim` |
+| referenced Dockerfiles missing | `ops/Dockerfile.{node,go,web}` (Node 22) |
+
+Details and reasons: FINDINGS.md D-1…D-10.

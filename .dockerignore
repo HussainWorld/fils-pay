@@ -1,8 +1,15 @@
-# Added for ops/Dockerfile.node and ops/Dockerfile.go (build context is the
-# repo root). Keeps host node_modules, git history and env files (secrets)
-# out of the images.
-**/node_modules
+# Build context for every image in ops/ is the repo root. Keep it small: the
+# hosted box has a 2 GB disk.
 .git
+**/node_modules
 **/dist
+**/*.tsbuildinfo
+.claude
+docs
+ops/.env
 ops/.env.prod
 ops/.env.docker
+.env
+.env.local
+npm-debug.log*
+.DS_Store

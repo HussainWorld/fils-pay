@@ -78,8 +78,16 @@ parked, `refund.succeeded` not delivered, nothing in settlement or reports).
 - **Tests**: `routes/refunds.fp300.test.ts`, `settlement/refund_batch_test.go`, `reporting/.../refundRollup.fp300.test.ts`.
 - **Deploy**: `ops/docker-compose.prod.yml` + `ops/DEPLOY.md`.
 
+## Deployment and other additions
+
+Hosting on Dilmune Cloud surfaced ten more problems (missing Dockerfiles, an
+env file compose never loaded, Postgres published to the internet with the dev
+password, an inverted DB-URL precedence, no way to log in in production, no
+CORS, Node 20 running zero tests), plus R-16 (MDR recalculation erased
+refund deductions). See **[FINDINGS.md](../FINDINGS.md)**.
+
 ## Still open (not fixed, flagged)
 
-- `ops/.env.docker` is committed with an acquirer secret (`.env` in `.gitignore` does not match it): rotate it.
+- The acquirer secret that was committed in `ops/.env.docker` is removed from the file (FINDINGS D-3), but it is still in git history: rotate it with the acquirer.
 - Seed data contains an orphan ledger entry for Delta Wholesale (Sept) that reconciliation correctly flags.
 - Go tests share one database across packages: run `go test -p 1 ./...`.

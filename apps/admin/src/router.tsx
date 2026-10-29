@@ -32,4 +32,4 @@ export const router = createBrowserRouter([
       { path: "/webhooks/:merchantId", element: <WebhookReplayPage /> },
     ],
   },
-]);
+], { basename: import.meta.env.BASE_URL }); // FIX D-9: hosted under /admin/ (same origin as the api); BASE_URL is "/" in dev
