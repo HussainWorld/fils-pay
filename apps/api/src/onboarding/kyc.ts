@@ -64,7 +64,14 @@ export async function recordKycDocument(
   // already confirmed the bytes are one of our three accepted formats, so
   // this only narrows which of those three this particular document type
   // requires.
-  if (PDF_ONLY_DOCUMENT_TYPES.includes(input.documentType) && !input.fileName.toLowerCase().endsWith(".pdf")) {
+  // FIX K-1: this checked only `input.fileName.endsWith(".pdf")`, a name the client chooses. A JPEG/PNG
+  // photo uploaded as "CR.pdf" passed the PDF-only rule (and was stored as .jpg/.png). "fixed in FP-231"
+  // above was never true for this path. The bytes must now be a PDF too (`detected` is already computed);
+  // the filename rule stays as the stricter existing behaviour.
+  if (
+    PDF_ONLY_DOCUMENT_TYPES.includes(input.documentType) &&
+    (detected !== "pdf" || !input.fileName.toLowerCase().endsWith(".pdf"))
+  ) {
     throw new UnprocessableEntityError("document_must_be_pdf", "commercial_registration and bank_letter documents must be a PDF");
   }
 
