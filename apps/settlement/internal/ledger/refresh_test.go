@@ -29,6 +29,9 @@ func insertClosedBatchWithLine(t *testing.T, pool *pgxpool.Pool, merchantID uuid
 	if err != nil {
 		t.Fatalf("insertClosedBatchWithLine: insert export line: %v", err)
 	}
+	// FIX FP-203: a closed batch always has the capture legs behind it in the ledger; the fixture used to
+	// insert only the scheme line because the old refresh read scheme lines instead of the ledger.
+	postLedgerLeg(t, pool, merchantID, "credit", amountFils)
 
 	return batchID
 }
