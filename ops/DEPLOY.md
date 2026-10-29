@@ -47,6 +47,31 @@ build cache afterwards, and waits for `/readyz` through the proxy.
 - Dashboard: `http://<host>/` (`owner@alpharetail.example` / `FilsPaySeed!2026`)
 - Admin: `http://<host>/admin/` (`superadmin@filspay.test` / `FilsPayAdminSeed!2026`)
 
+## CI/CD: GitHub Actions (`.github/workflows/deploy.yml`)
+
+- **Push to `main`**: runs typecheck and every test suite (each on its own fresh
+  Postgres, Node 22, Go with DB-backed tests). If everything passes, it rsyncs
+  the tree to the server and runs `ops/deploy.sh` (keeps data, applies new
+  migrations), then smoke-tests `/readyz` through the public proxy.
+- **Actions → test-and-deploy → Run workflow** (on `main`): same, with a
+  `seed` checkbox that runs `deploy.sh --seed`.
+- The server's `ops/.env` is never sent or overwritten.
+
+One-time setup (run by a repo admin, from a machine that can already SSH in):
+
+```bash
+ssh-keygen -t ed25519 -N "" -C github-actions-deploy@fils-pay -f /tmp/fp_deploy
+ssh dilmune@<host> 'cat >> ~/.ssh/authorized_keys' < /tmp/fp_deploy.pub
+gh secret set DILMUNE_SSH_KEY < /tmp/fp_deploy
+ssh-keygen -F <host> | grep -v '^#' | gh secret set DILMUNE_KNOWN_HOSTS
+gh secret set DILMUNE_HOST --body <host>
+gh secret set DILMUNE_USER --body dilmune
+rm /tmp/fp_deploy /tmp/fp_deploy.pub
+```
+
+The deploy key is used only by the pipeline. To revoke it, delete its
+`github-actions-deploy@fils-pay` line from the server's `authorized_keys`.
+
 ## What differs from the original dev compose file (and why)
 
 | Original | Now |

@@ -1,0 +1,150 @@
+# CI/CD for FilsPay: test everything, then deploy `main` to Dilmune Cloud.
+#
+#   push to main      -> test -> deploy (keeps data, applies new migrations)
+#   Run workflow      -> test -> deploy, optionally with --seed (resets demo data)
+#
+# Deploy = rsync the checked-out tree to the server and run ops/deploy.sh there
+# (see ops/DEPLOY.md). Required repository secrets:
+#   DILMUNE_HOST          server address (e.g. 139.59.57.131)
+#   DILMUNE_USER          ssh user (dilmune)
+#   DILMUNE_SSH_KEY       private key of a deploy-only key in the server's authorized_keys
+#   DILMUNE_KNOWN_HOSTS   the server's pinned host key line(s) (ssh-keygen -F <host>)
+# The server keeps its own ops/.env (secrets); the pipeline never touches it.
+name: test-and-deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Reload demo seed data (TRUNCATES fixture tables)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-dilmune
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: filspay
+          POSTGRES_PASSWORD: filspay
+          POSTGRES_DB: filspay
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U filspay" --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      PGHOST: localhost
+      PGUSER: filspay
+      PGPASSWORD: filspay
+      # Test-only key (tests also pass their own); the built-in dev fallback is invalid (FINDINGS D-6).
+      WEBHOOK_SECRET_ENCRYPTION_KEY: Y1ZTGTcYbe30GZJebys9w7T3OYZNKewuOH3SUCEdRQk=
+    steps:
+      - uses: actions/checkout@v4
+      # Node 22: cookie@2 requires it, and Node 20's test runner can't expand the
+      # "src/**/*.test.ts" globs, so it silently runs zero tests (FINDINGS D-10).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: apps/settlement/go.sum
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+      # One fresh, migrated database per suite: suites leave rows behind that
+      # other suites' "process everything pending" passes would pick up.
+      - name: Create and migrate test databases
+        run: |
+          for db in t_api t_reporting t_scripts t_go; do
+            createdb "$db"
+            DATABASE_URL="postgres://filspay:filspay@localhost:5432/$db" npm run migrate
+          done
+          # reconcile_march tests need the March fixtures.
+          DATABASE_URL="postgres://filspay:filspay@localhost:5432/t_scripts" npm run seed
+
+      - name: Test packages (money, events)
+        run: npm test -w @filspay/money && npm test -w @filspay/events
+        env: { DATABASE_URL: "postgres://filspay:filspay@localhost:5432/t_api" }
+      - name: Test api
+        run: npm test -w @filspay/api
+        env: { DATABASE_URL: "postgres://filspay:filspay@localhost:5432/t_api" }
+      - name: Test reporting
+        run: npm test -w @filspay/reporting
+        env: { DATABASE_URL: "postgres://filspay:filspay@localhost:5432/t_reporting" }
+      - name: Test web
+        run: npm test -w @filspay/web
+      - name: Test scripts
+        run: npx tsx --test scripts/*.test.ts
+        env: { DATABASE_URL: "postgres://filspay:filspay@localhost:5432/t_scripts" }
+      - name: Test settlement (Go, DB-backed)
+        working-directory: apps/settlement
+        run: go vet ./... && go test -count=1 -p 1 ./...
+        env: { DATABASE_URL: "postgres://filspay:filspay@localhost:5432/t_go?sslmode=disable" }
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: dilmune
+      url: http://${{ vars.DILMUNE_PUBLIC_HOST || '139.59.57.131' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check deploy secrets
+        env:
+          HOST: ${{ secrets.DILMUNE_HOST }}
+          USER_: ${{ secrets.DILMUNE_USER }}
+          KEY: ${{ secrets.DILMUNE_SSH_KEY }}
+          KNOWN: ${{ secrets.DILMUNE_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          [ -n "$HOST" ]  || missing="$missing DILMUNE_HOST"
+          [ -n "$USER_" ] || missing="$missing DILMUNE_USER"
+          [ -n "$KEY" ]   || missing="$missing DILMUNE_SSH_KEY"
+          [ -n "$KNOWN" ] || missing="$missing DILMUNE_KNOWN_HOSTS"
+          if [ -n "$missing" ]; then echo "::error::missing repository secrets:$missing (see ops/DEPLOY.md)"; exit 1; fi
+
+      - name: Configure SSH (pinned host key)
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.DILMUNE_SSH_KEY }}" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DILMUNE_KNOWN_HOSTS }}" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host dilmune
+            HostName ${{ secrets.DILMUNE_HOST }}
+            User ${{ secrets.DILMUNE_USER }}
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+          EOF
+
+      - name: Sync code to the server
+        # ops/.env (the server's own secrets) is excluded, so --delete never removes it.
+        run: >
+          rsync -az --delete
+          --exclude .git --exclude node_modules --exclude '**/dist' --exclude 'ops/.env'
+          ./ dilmune:fils-pay/
+
+      - name: Build, migrate and restart
+        run: ssh dilmune "cd fils-pay && ops/deploy.sh ${{ inputs.seed && '--seed' || '' }}"
+
+      - name: Smoke test through the public proxy
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS "http://${{ secrets.DILMUNE_HOST }}/readyz" && exit 0
+            sleep 2
+          done
+          echo "::error::/readyz did not answer"; exit 1
