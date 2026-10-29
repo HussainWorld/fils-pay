@@ -104,6 +104,11 @@ export function SettlementBatchDetailPage() {
         <dd>{bhd(batch.grossFils)}</dd>
         <dt>Fee</dt>
         <dd>{bhd(batch.feeFils)}</dd>
+        {/* FIX R-11: refunds now reduce the payout; show them so net = gross - fee - refunds + fee reversed adds up */}
+        <dt>Refunds</dt>
+        <dd>{bhd(batch.refundedFils)}</dd>
+        <dt>Fee reversed on refunds</dt>
+        <dd>{bhd(batch.feeReversedFils)}</dd>
         <dt>Net payout</dt>
         <dd>{bhd(batch.netPayoutFils)}</dd>
         <dt>Closed at</dt>

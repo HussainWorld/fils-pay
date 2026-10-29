@@ -84,14 +84,13 @@ export type TransactionStatus =
 
 /** serializeTransaction() also returns `merchantId` — kept here so the type
  *  matches the wire shape exactly rather than a convenient subset of it. */
-// FH: no refundedFils on this DTO, so the drawer can't compute what's still refundable
-// refundedFils is there, a few lines down — am
 export interface TransactionDto {
   id: string;
   merchantId: string;
   status: TransactionStatus;
   amountFils: number;
   capturedFils: number;
+  refundedFils: number; // FIX R-15: was missing (and the comment above claimed otherwise), so nothing could show what is still refundable
   currency: string;
   reference: string | null;
   acquirerReference: string;
@@ -215,7 +214,7 @@ export interface ReplayResponse {
 // --- settlement / reconciliation ---
 export type SettlementBatchStatus = "open" | "closed" | "paid";
 
-/** @property netPayoutFils Always exactly grossFils - feeFils. */
+/** @property netPayoutFils Always exactly grossFils - feeFils - refundedFils + feeReversedFils. */
 export interface SettlementBatchDto {
   id: string;
   batchDate: string;
@@ -223,6 +222,8 @@ export interface SettlementBatchDto {
   grossFils: number;
   feeFils: number;
   netPayoutFils: number;
+  refundedFils: number; // FIX R-11: refunds deducted from this payout
+  feeReversedFils: number; // FIX R-11
   closedAt: string | null;
   paidAt: string | null;
 }
