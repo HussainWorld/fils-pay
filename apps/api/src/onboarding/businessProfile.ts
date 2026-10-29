@@ -101,7 +101,13 @@ export async function updateBusinessProfile(
   merchantId: string,
   patch: BusinessProfilePatch,
 ): Promise<BusinessProfile> {
-  const entries = Object.entries(patch).filter(([, value]) => value !== undefined) as Array<
+  // FIX P-1: the route passes the raw request body, so an unrecognised field (a typo, an extra client
+  // field, "__proto__") reached PATCHABLE_COLUMNS[key] as undefined/an object and produced SQL like
+  // `undefined = $2`: a 500 instead of a clean update. Column names were never user-controlled (no
+  // injection), but only the fields this endpoint documents are now considered; others are ignored.
+  const entries = Object.entries(patch).filter(
+    ([key, value]) => value !== undefined && Object.hasOwn(PATCHABLE_COLUMNS, key),
+  ) as Array<
     [keyof BusinessProfilePatch, string | null]
   >;
 
