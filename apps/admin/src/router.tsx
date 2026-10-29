@@ -32,4 +32,5 @@ export const router = createBrowserRouter([
       { path: "/webhooks/:merchantId", element: <WebhookReplayPage /> },
     ],
   },
-]);
+  // BASE_URL is "/" in dev and "/admin/" in the hosted build (ops/Dockerfile.web).
+], { basename: import.meta.env.BASE_URL });

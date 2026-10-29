@@ -1,0 +1,13 @@
+# Build context for every image in ops/ is the repo root. Keep it small: the
+# hosted box has a 2 GB disk.
+.git
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.claude
+docs
+ops/.env
+.env
+.env.local
+npm-debug.log*
+.DS_Store
