@@ -1,0 +1,5 @@
+# Added for ops/Dockerfile.node and ops/Dockerfile.go (build context is the
+# repo root). Keeps host node_modules, git history and env files (secrets)
+# out of the images.
+**/node_modules
+.git

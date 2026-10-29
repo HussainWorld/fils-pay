@@ -1,0 +1,12 @@
+# Added: this file was referenced by docker-compose.yml but never committed.
+# Image for api, reporting, migrate and seed. Build context is the repo root
+# (see docker-compose.yml). Full install, including devDependencies, because
+# the services run TypeScript directly through tsx.
+FROM node:20
+
+WORKDIR /app
+
+COPY . .
+RUN npm ci
+
+EXPOSE 3000
