@@ -7,6 +7,9 @@ and `docs/adr/` (per the briefing). Where `CLAUDE.md`, `AGENTS.md` or
 
 Status: **Fixed** (in this branch) · **Open** (found, not fixed yet).
 
+Every fixed line in the code carries a `FIX <ID>` comment (e.g. `# FIX D-4: ...`)
+saying what was wrong and what the line does now. `grep -rn "FIX [A-Z]-[0-9]"` lists them.
+
 ---
 
 ## A-0. AI-assistant config files contradict the ADRs — Open (process)

@@ -1,3 +1,4 @@
+-- FIX D-7: abandoned migration (HANDOVER; ADR-0005 reserves 0054-0056). Moved out of db/migrations/ so it is never applied. See README.md.
 -- Convenience views used by the API and admin dashboard.
 
 CREATE OR REPLACE VIEW merchant_payable_position AS

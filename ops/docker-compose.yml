@@ -9,7 +9,9 @@
 # Shared non-secret service settings come from ops/.env.docker via env_file.
 #
 # Deploy / run from the repo root: ops/deploy.sh (see ops/README.md).
+# FIX <ID> comments refer to entries in FINDINGS.md.
 
+# FIX D-4: was a hard-coded `filspay_dev_password` in every URL; now a random per-host password from ops/.env.
 x-database-url: &database-url postgres://filspay:${POSTGRES_PASSWORD:?run ops/gen-env.sh}@postgres:5432/filspay?sslmode=disable
 
 services:
@@ -18,10 +20,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: filspay
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ops/gen-env.sh}
-      POSTGRES_DB: filspay
-    # Loopback only: reachable for psql on the box, never from the internet.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run ops/gen-env.sh} # FIX D-4: was the committed dev password
     ports:
+      # FIX D-4: was "5432:5432" (all interfaces). Docker-published ports bypass ufw, so the
+      # database was open to the internet with a known password. Loopback only now.
       - "127.0.0.1:5432:5432"
     volumes:
       - filspay_pgdata:/var/lib/postgresql/data
@@ -32,13 +34,12 @@ services:
       retries: 20
 
   # One-off: applies db/migrations/*.sql, then exits. Safe to re-run; the
-  # runner skips what schema_migrations says is already applied. In the
-  # `setup` profile so `up` never starts it implicitly.
+  # runner skips what schema_migrations says is already applied.
   migrate:
     # Built by the api service (one image for all four Node services).
     image: filspay/node:local
     pull_policy: never
-    profiles: ["setup"]
+    profiles: ["setup"] # FIX: was started by every `up`; now only runs when asked (ops/deploy.sh)
     command: ["npm", "run", "migrate"]
     environment:
       DATABASE_URL: *database-url
@@ -47,18 +48,17 @@ services:
         condition: service_healthy
 
   # One-off: deterministic seed data. db/seed/index.ts TRUNCATEs and
-  # regenerates on every run, so it is only ever run explicitly
-  # (ops/deploy.sh --seed), never as part of `up`.
+  # regenerates on every run.
   seed:
     # Built by the api service (one image for all four Node services).
     image: filspay/node:local
     pull_policy: never
-    profiles: ["setup"]
+    profiles: ["setup"] # FIX: was started by every `up`, wiping data each time; now only `deploy.sh --seed`
     command: ["npm", "run", "seed"]
     environment:
       DATABASE_URL: *database-url
-      # The seed calls the api's loadConfig(); the built-in dev fallback key
-      # decodes to 34 bytes and fails validation, so pass the real one.
+      # FIX D-6: the seed calls the api's loadConfig(); its built-in dev key decodes to 34 bytes
+      # (32 required), so it crashed. Pass the same real key the api uses.
       WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh}
     depends_on:
       postgres:
@@ -68,29 +68,31 @@ services:
     image: filspay/node:local
     build:
       context: ..
-      dockerfile: ops/Dockerfile.node
+      dockerfile: ops/Dockerfile.node # FIX D-1: this file was referenced but never existed
     restart: unless-stopped
     command: ["npx", "tsx", "apps/api/src/index.ts"]
+    # FIX D-2: .env.docker was never loaded (no env_file; compose only auto-reads `.env`, and only
+    # for interpolation), so NODE_ENV/PORT never reached the api and it ran in development mode.
     env_file: .env.docker
     environment:
       DATABASE_URL: *database-url
       SETTLEMENT_INTERNAL_URL: http://settlement:8091
-      SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/gen-env.sh}
-      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh}
-      ACQUIRER_CALLBACK_SIGNING_SECRET: ${ACQUIRER_CALLBACK_SIGNING_SECRET:?run ops/gen-env.sh}
-      # Payment-link URLs are built from this; it's the proxy's public URL.
+      SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/gen-env.sh} # FIX D-2: required in production, was never set
+      WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh} # FIX D-6: always set; the dev fallback is invalid
+      ACQUIRER_CALLBACK_SIGNING_SECRET: ${ACQUIRER_CALLBACK_SIGNING_SECRET:?run ops/gen-env.sh} # FIX D-3: was committed in .env.docker
+      # FIX D-9: payment-link URLs default to http://localhost:5173; point them at the public proxy URL.
       CHECKOUT_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
-      # Secure cookies are dropped by browsers over plain http. Set true in
-      # ops/.env once the public URL is https.
+      # FIX D-9: NODE_ENV=production forces Secure cookies, which browsers drop over plain http,
+      # so login silently failed. Set true in ops/.env once the public URL is https.
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
-      # No email/SMS provider is wired, so with NODE_ENV=production nobody can
-      # receive an OTP. Demo hosts set this true in ops/.env: the login
-      # response carries the code and both login pages display it.
+      # FIX D-8: production never delivers an OTP (no email/SMS provider; the log omits the code),
+      # so nobody could log in. Demo hosts set this true: the login pages display the code.
       OTP_DEV_EXPOSE: ${OTP_DEV_EXPOSE:-false}
       NODE_OPTIONS: --max-old-space-size=384
     volumes:
       - filspay_kyc:/app/data/kyc
     mem_limit: 512m
+    # FIX D-4: was "3000:3000" (public). The api is only reached through the proxy now.
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,14 +100,14 @@ services:
   settlement:
     build:
       context: ..
-      dockerfile: ops/Dockerfile.go
+      dockerfile: ops/Dockerfile.go # FIX D-1: this file was referenced but never existed
     restart: unless-stopped
     command: ["./settlement", "daemon"]
     environment:
-      # Note: PGCONN_SETTLEMENT, if set, *overrides* DATABASE_URL
-      # (internal/config/config.go), so it is deliberately not set here.
       DATABASE_URL: *database-url
-      # The daemon exits at boot without it; must match the api's value.
+      # FIX D-5: PGCONN_SETTLEMENT was set here "harmlessly", but config.go lets it OVERRIDE
+      # DATABASE_URL (the docs say the opposite), so it is deliberately not set any more.
+      # FIX D-2: the daemon calls RequireInternalToken() and exited at boot without this. Must match the api.
       SETTLEMENT_INTERNAL_TOKEN: ${SETTLEMENT_INTERNAL_TOKEN:?run ops/gen-env.sh}
     mem_limit: 256m
     depends_on:
@@ -127,6 +129,8 @@ services:
       postgres:
         condition: service_healthy
 
+  # FIX D-9: the api has no CORS handling and both frontends use cookie auth, so they can only
+  # work from the api's own origin. nginx serves web at /, admin at /admin/, proxies /v1 to the api.
   proxy:
     build:
       context: ..

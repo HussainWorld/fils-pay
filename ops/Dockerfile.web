@@ -27,8 +27,9 @@ COPY packages packages
 COPY apps/web apps/web
 COPY apps/admin apps/admin
 
-# Empty base URLs make both clients call relative paths (/v1/...), i.e. the
-# same origin nginx serves them from. The clients use `??`, so "" is kept.
+# FIX D-9: the clients default to http://localhost:3000 (cross-origin, and the api has no CORS).
+# Empty base URLs make both call relative paths (/v1/...), i.e. the same
+# origin nginx serves them from. The clients use `??`, so "" is kept.
 ENV VITE_API_BASE_URL="" \
     VITE_ADMIN_API_BASE_URL="" \
     VITE_WEB_BASE_URL=""

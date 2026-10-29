@@ -1,3 +1,4 @@
+# FIX D-1: docker-compose.yml built this file but it was never committed.
 # Multi-stage build of apps/settlement. The Go toolchain and module/build
 # caches stay in the builder stage; the runtime image is the static binary
 # on alpine. After building on the hosted box, run `docker builder prune -f`

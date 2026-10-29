@@ -1,4 +1,4 @@
-# Abandoned migrations — not applied
+# Abandoned migrations — not applied (FIX D-7)
 
 `db/migrate.ts` only reads `*.sql` directly under `db/migrations/`, so
 nothing in this folder runs.
