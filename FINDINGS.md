@@ -64,12 +64,15 @@ Status: **Fixed** · **Open**.
   close and payouts to another database.
 - **Fix:** not set in compose; the comment states the real precedence.
 
-### D-6. Built-in dev webhook key is invalid — Open
-- **What:** `DEV_FALLBACK_WEBHOOK_KEY_B64` (`apps/api/src/config.ts`) decodes to
-  34 bytes; validation requires exactly 32.
-- **Breaks:** any non-production boot without an explicit key throws in
-  `loadConfig`. That covers the api in dev and the seed script.
-- **Workaround:** the key is always supplied from `ops/.env` (also for the seed).
+### D-6. Built-in dev webhook key is invalid — Fixed
+- **What:** `DEV_FALLBACK_WEBHOOK_KEY_B64` (`apps/api/src/config.ts`) decoded to
+  34 bytes; validation requires exactly 32 (AES-256). The compose comment "a
+  dev key is used otherwise" was never true.
+- **Breaks:** any non-production boot without an explicit key threw in
+  `loadConfig`: the api in dev, and the seed script.
+- **Fix:** a valid 32-byte dev-only key; production still refuses to boot
+  without a real one (`config.fix.test.ts`). Verified: the seed runs with no
+  key set.
 
 ### D-7. Migrations 0054–0055 fail on a fresh database — Fixed
 - **What:** 0054 references `settlement_batch_events`, which no migration
@@ -158,6 +161,46 @@ Status: **Fixed** · **Open**.
   Existing imports are backfilled with the same formula, so re-uploading a
   sheet applied before the fix is caught too. A sheet with any different
   row is still accepted (`adjustmentImport.fix.test.ts`).
+
+### P-1. Business profile PATCH answered 500 on unknown fields — Fixed
+- **What:** the route passes the raw request body to `updateBusinessProfile`,
+  which looked every key up in `PATCHABLE_COLUMNS`. An unrecognised key (a
+  typo, an extra client field, `__proto__`/`constructor`) produced SQL like
+  `undefined = $2`.
+- **Why it's not injection:** the column text only ever comes from the fixed
+  map (FH asked "injection? claude: yes"; it isn't).
+- **Breaks:** any client sending an extra field gets a 500 and the profile isn't
+  saved.
+- **Fix:** only the documented fields reach the SQL builder; others are
+  ignored (`businessProfile.fix.test.ts`).
+
+### T-2. A failed ROLLBACK hid the real error and poisoned the pool — Fixed
+- **What:** in `withTransaction` (used by every money operation),
+  `await client.query("ROLLBACK")` throws when the connection has died. That
+  replaced the original error, and `release()` returned the dead client to the
+  pool. Comments from three people noticed this and left it.
+- **Breaks:** logs and callers see "Connection terminated" instead of the real
+  failure, and the next request that gets that client fails too.
+- **Fix:** the original error is always rethrown; a client whose ROLLBACK
+  failed is destroyed with `release(err)` (`withTransaction.fix.test.ts`).
+
+### I-1. Admin invite codes used Math.random — Fixed (latent)
+- **What:** `generateInviteCode` (admin onboarding) used `Math.random`, which is
+  predictable. No route or table uses it yet.
+- **Breaks:** once wired up, invite codes (bearer secrets that create an admin
+  account) would be guessable.
+- **Fix:** `crypto.randomInt` (`config.fix.test.ts`).
+
+### C-1…C-3. False statements in code and agent config — Fixed
+- **C-1:** `idempotency.ts` said stale claims are cleaned by
+  `scripts/sweep_idempotency.ts` (it never existed) and that refunds commit
+  their claim before the acquirer call (no longer true). Corrected.
+- **C-2:** removed dead float money helpers with no callers: `SchemeAmountBD`
+  (the float scheme amount behind AUDIT-FIXES #2) and `EstimateMonthlyPayout`
+  (float32 sum).
+- **C-3:** `CLAUDE.md` claimed impersonation is gated to `super_admin` by
+  middleware. No such gate exists; ADMIN.md lets support impersonate, and the
+  grant is read-only (#23). Corrected that bullet.
 
 ---
 
