@@ -24,6 +24,11 @@ export async function withTransaction<T>(
    * fn; nothing here upgrades the level.
    */
   const client = await pool.connect();
+  // FIX T-2: when the connection had died, `await client.query("ROLLBACK")` threw, replacing the original
+  // error with "Connection terminated" (callers and logs lost the real cause), and `release()` returned the
+  // broken client to the pool for the next request to fail on. The original error is now always rethrown,
+  // and a client whose ROLLBACK failed is destroyed (`release(err)`) rather than reused.
+  let broken: Error | undefined;
   try {
     await client.query("BEGIN");
     try {
@@ -31,10 +36,14 @@ export async function withTransaction<T>(
       await client.query("COMMIT");
       return result;
     } catch (err) {
-      await client.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackErr) {
+        broken = rollbackErr instanceof Error ? rollbackErr : new Error(String(rollbackErr));
+      }
       throw err;
     }
   } finally {
-    client.release();
+    client.release(broken);
   }
 }
