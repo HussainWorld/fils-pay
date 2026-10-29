@@ -21,35 +21,6 @@ func UpdateLifetimePayoutMonitoringEstimate(ctx context.Context, tx pgx.Tx, merc
 	// loses fils once the running total passes 2^24 (see migration 0073).
 	return err
 }
-// EstimateMonthlyPayout returns an approximate total payout for the
-// given merchant over the last 30 calendar days, used by the ops
-// dashboard to flag merchants whose settlement run is unusually large
-// or small relative to their recent history. Like
-// UpdateLifetimePayoutMonitoringEstimate, this is a monitoring-only
-// figure that never feeds into any payout-affecting code path.
-func EstimateMonthlyPayout(ctx context.Context, tx pgx.Tx, merchantID uuid.UUID) (float32, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT net_payout_fils FROM settlement_batches
-		 WHERE merchant_id = $1 AND status = 'paid' AND paid_at >= now() - interval '30 days'
-		 ORDER BY paid_at DESC
-	`, merchantID)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
 
-	var total float32
-	var count int
-	for rows.Next() {
-		var netFils int64
-		if err := rows.Scan(&netFils); err != nil {
-			return 0, err
-		}
-		total += float32(netFils)
-		count++
-	}
-	if err := rows.Err(); err != nil {
-		return 0, err
-	}
-	return total, nil
-}
+// FIX C-2: EstimateMonthlyPayout was removed: it summed net payouts in float32 (24-bit mantissa, wrong
+// above ~16,777 BD, the same drift AUDIT-FIXES #9 fixed for the lifetime estimate) and nothing called it.

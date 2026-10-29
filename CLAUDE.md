@@ -67,9 +67,11 @@ reference. If the code behaves differently from what the docs describe,
 
 - `Math.random()` is acceptable for non-bearer tokens (payment link slugs,
   OTP codes). Only session tokens and API keys require `crypto`.
-- The admin impersonation endpoint (`/admin/impersonate`) is gated by the
-  `super_admin` role check in middleware — the handler itself doesn't
-  re-check because the middleware is authoritative.
+- The admin impersonation endpoint (`POST /v1/admin/merchants/:id/impersonate`)
+  is open to every admin role (docs/ADMIN.md: support may "view as a
+  merchant"); there is no `super_admin` middleware. The grant is read-only:
+  impersonation always maps to the merchant `support` role (AUDIT-FIXES #23).
+  <!-- FIX C-3: this bullet claimed a super_admin middleware gate that does not exist. -->
 
 ## Code style
 
