@@ -377,6 +377,14 @@ func TestCloseAndPayout_MerchantBalancesIncremental(t *testing.T) {
 	start, _ := BusinessDayWindow(businessDate)
 
 	insertCaptureEvent(t, pool, merchantID, mdrBps, 10000, start.Add(time.Hour))
+	// FIX FP-203b: the cache mirrors the merchant_payable ledger. capture.ts moves it when the capture is
+	// journaled; this fixture writes the ledger directly, so it sets the cache to what capture.ts would have.
+	if _, err := pool.Exec(context.Background(), `
+		INSERT INTO merchant_balances (merchant_id, cached_payable_fils, updated_at)
+		SELECT $1, COALESCE(SUM(CASE WHEN direction = 'credit' THEN amount_fils ELSE -amount_fils END), 0), now()
+		  FROM ledger_entries WHERE merchant_id = $1 AND account_id = 'merchant_payable'`, merchantID); err != nil {
+		t.Fatalf("seed cache from ledger: %v", err)
+	}
 
 	closeResult, err := CloseBatch(context.Background(), pool, merchantID, businessDate)
 	if err != nil {
@@ -386,13 +394,15 @@ func TestCloseAndPayout_MerchantBalancesIncremental(t *testing.T) {
 		t.Fatalf("expected a positive net payout to exercise the balance delta, got %d", closeResult.NetPayoutFils)
 	}
 
+	// FIX FP-203b: this used to expect the cache to jump by +net at close. Close posts nothing to the
+	// ledger, so the cache (already holding the captured net) must stay where it is.
 	var afterClose int64
 	err = pool.QueryRow(context.Background(), `SELECT cached_payable_fils FROM merchant_balances WHERE merchant_id = $1`, merchantID).Scan(&afterClose)
 	if err != nil {
 		t.Fatalf("query merchant_balances after close: %v", err)
 	}
 	if money.Fils(afterClose) != closeResult.NetPayoutFils {
-		t.Errorf("cached_payable_fils after close = %d, want %d (the batch's net_payout_fils)", afterClose, closeResult.NetPayoutFils)
+		t.Errorf("cached_payable_fils after close = %d, want %d (unchanged: the captured net already in the cache)", afterClose, closeResult.NetPayoutFils)
 	}
 
 	payoutResult, err := PayoutBatch(context.Background(), pool, closeResult.BatchID)

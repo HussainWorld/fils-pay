@@ -258,6 +258,17 @@ export async function processRefund(
       );
     }
 
+    // FIX FP-203b: mirror the ledger in the cached balance: merchant_payable was just debited the refund
+    // and credited back the reversed fee.
+    await client.query(
+      `INSERT INTO merchant_balances (merchant_id, cached_payable_fils, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (merchant_id) DO UPDATE
+         SET cached_payable_fils = merchant_balances.cached_payable_fils + EXCLUDED.cached_payable_fils,
+             updated_at = now()`,
+      [prepared.merchantId, -(prepared.requestedAmount - feeReversedFils)],
+    );
+
     // The timeline records what this refund did to the captured amount, so
     // it stays readable regardless of what the status column ends up
     // saying: everything captured has now gone back, or only part of it has.

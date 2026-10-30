@@ -241,6 +241,19 @@ export async function captureTransaction(
       );
     }
 
+    // FIX FP-203b: the cached balance mirrors merchant_payable (the console rebuild and the CLI recompute
+    // it from the ledger). The capture just credited gross and debited the fee there, so the cache moves by
+    // the same net now. Settlement used to add the net at batch close instead, so after a rebuild (which
+    // already counts unsettled captures) every close counted them a second time.
+    await client.query(
+      `INSERT INTO merchant_balances (merchant_id, cached_payable_fils, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (merchant_id) DO UPDATE
+         SET cached_payable_fils = merchant_balances.cached_payable_fils + EXCLUDED.cached_payable_fils,
+             updated_at = now()`,
+      [input.merchantId, requestedAmount - feeFils],
+    );
+
     // Hold lifecycle: released exactly when nothing remains outstanding.
     if (newStatus === "captured") {
       await client.query(`UPDATE holds SET status = 'released' WHERE transaction_id = $1 AND status = 'active'`, [
