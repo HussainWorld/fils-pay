@@ -104,6 +104,9 @@ export function SettlementBatchDetailPage() {
         <dd>{bhd(batch.grossFils)}</dd>
         <dt>Fee</dt>
         <dd>{bhd(batch.feeFils)}</dd>
+        {/* FIX CP-1: credits are now paid in the batch; show them so net = gross - fee + credits adds up. */}
+        <dt>Credits</dt>
+        <dd>{bhd(batch.creditedFils)}</dd>
         <dt>Net payout</dt>
         <dd>{bhd(batch.netPayoutFils)}</dd>
         <dt>Closed at</dt>

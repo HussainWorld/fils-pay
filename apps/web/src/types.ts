@@ -223,6 +223,7 @@ export interface SettlementBatchDto {
   grossFils: number;
   feeFils: number;
   netPayoutFils: number;
+  creditedFils: number; // FIX CP-1: manual credits paid out in this batch
   closedAt: string | null;
   paidAt: string | null;
 }
@@ -272,6 +273,8 @@ export interface VolumePointDto {
   capturedCount: number;
   capturedGrossFils: number;
   voidedCount: number;
+  refundCount: number; // FIX UI-1: returned by the API since FP-300, never typed or shown
+  refundGrossFils: number;
 }
 
 /** `readModelAsOf` is nullable on the two lagged widgets: it reads

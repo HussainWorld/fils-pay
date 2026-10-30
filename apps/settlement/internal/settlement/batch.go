@@ -255,16 +255,48 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 	if err := refundRows.Err(); err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: iterate refunds: %w", err)
 	}
+	// FIX CP-1: posted manual credits were journaled to merchant_payable but never paid out by any batch
+	// (nothing here read credit_requests), so the merchant's balance rose and the money never arrived.
+	// Claim every posted, not-yet-paid credit whose effective date is on or before this business day and
+	// add it to the payout: net = gross - fee + credited.
+	creditRows, err := tx.Query(ctx, `
+		SELECT id, base_amount_fils + fee_reversal_fils
+		  FROM credit_requests
+		 WHERE merchant_id = $1 AND status = 'posted' AND settlement_batch_id IS NULL
+		   AND effective_date <= $2
+		 ORDER BY effective_date, id
+		 FOR UPDATE
+	`, merchantID, batchDateOnly)
+	if err != nil {
+		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: select credits: %w", err)
+	}
+	var creditIDs []uuid.UUID
+	var batchCredited money.Fils
+	for creditRows.Next() {
+		var id uuid.UUID
+		var amount int64
+		if err := creditRows.Scan(&id, &amount); err != nil {
+			creditRows.Close()
+			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: scan credit: %w", err)
+		}
+		creditIDs = append(creditIDs, id)
+		batchCredited += money.Fils(amount)
+	}
+	creditRows.Close()
+	if err := creditRows.Err(); err != nil {
+		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: iterate credits: %w", err)
+	}
+
 	var refundIDs []uuid.UUID
 	for _, r := range pendingRefunds {
-		if NetPayableFils(batchGross-r.amount, batchFee-r.feeReversed) < 0 {
+		if NetPayableFils(batchGross-r.amount, batchFee-r.feeReversed)+batchCredited < 0 { // FIX CP-1: credits count toward what refunds can net against
 			break // keep order: this and later refunds wait for the next batch
 		}
 		batchGross -= r.amount
 		batchFee -= r.feeReversed
 		refundIDs = append(refundIDs, r.id)
 	}
-	netPayout := NetPayableFils(batchGross, batchFee)
+	netPayout := NetPayableFils(batchGross, batchFee) + batchCredited // FIX CP-1
 
 	// Record this batch's contribution to the platform-wide lifetime
 	// processed-volume counter, in the same transaction that freezes this
@@ -277,9 +309,10 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 	// Step 10: freeze the batch totals.
 	_, err = tx.Exec(ctx, `
 		UPDATE settlement_batches
-		   SET status = 'closed', gross_fils = $2, fee_fils = $3, net_payout_fils = $4, closed_at = now()
+		   SET status = 'closed', gross_fils = $2, fee_fils = $3, net_payout_fils = $4, closed_at = now(),
+		       credited_fils = $5
 		 WHERE id = $1
-	`, batchID, int64(batchGross), int64(batchFee), int64(netPayout))
+	`, batchID, int64(batchGross), int64(batchFee), int64(netPayout), int64(batchCredited)) // FIX CP-1
 	if err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: freeze batch totals: %w", err)
 	}
@@ -292,6 +325,13 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		`, eventIDs, batchID)
 		if err != nil {
 			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: mark events batched: %w", err)
+		}
+	}
+
+	// FIX CP-1: mark the claimed credits so no later batch pays them again.
+	if len(creditIDs) > 0 {
+		if _, err := tx.Exec(ctx, `UPDATE credit_requests SET settlement_batch_id = $2 WHERE id = ANY($1)`, creditIDs, batchID); err != nil {
+			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: mark credits batched: %w", err)
 		}
 	}
 
@@ -336,7 +376,12 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 	}
 
 	// Step 14: incrementally update the merchant_balances cache.
-	if err := balances.ApplyBatchClose(ctx, tx, merchantID, batchID, netPayout); err != nil {
+	// FIX FP-203b: the cached balance mirrors the merchant_payable ledger account (that is what the
+	// console rebuild and the CLI recompute it from). Closing a batch posts nothing to that account, so it
+	// must not move the cache; it used to add +net here, and captures/refunds never touched the cache, so
+	// after any rebuild (which already counts unsettled captures) the next close counted them twice.
+	// Captures and refunds now update the cache when they hit the ledger; payout still subtracts net.
+	if err := balances.ApplyBatchClose(ctx, tx, merchantID, batchID, 0); err != nil {
 		return BatchResult{}, fmt.Errorf("settlement: CloseBatch: apply balance cache delta: %w", err)
 	}
 
