@@ -5,7 +5,11 @@ dist/
 .env.local
 npm-debug.log*
 .DS_Store
-.claude/
+# Claude Code: personal/local state stays out; the team setup is committed
+.claude/*
+!.claude/CLAUDE.md
+!.claude/settings.json
+!.claude/commands/
 # deploy secrets (never commit). Note: ops/.env.docker was committed with a
 # real-looking acquirer secret; `.env` above does NOT match `.env.docker`.
 ops/.env.prod

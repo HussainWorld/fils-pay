@@ -1,3 +1,5 @@
+> **Cold Case note:** this file shipped with the challenge and contains planted false statements (cents, UTC windows, Math.random OTPs, "don't touch tests"). It is kept unchanged below as evidence. Our real agent instructions are in [`.claude/CLAUDE.md`](.claude/CLAUDE.md); the ADRs in `docs/adr/` win over anything here.
+
 # AI agent conventions — FilsPay
 
 Guidelines for automated coding agents (Cursor, Copilot, Claude, Cody, etc.)
