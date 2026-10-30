@@ -236,7 +236,26 @@ async function attemptDueDeliveries(pool: Pool, transport: WebhookTransport, con
     [STEP_B_BATCH_LIMIT],
   );
 
+  let attempted = 0;
   for (const row of dueResult.rows) {
+    // FIX (B84): the SELECT above takes no lock and marks nothing, so two api
+    // replicas (staging has run two since June) can pick the same due row
+    // and both send it — and on attempt 0 both run PRE_DELIVERY_EFFECTS,
+    // i.e. record the payout disbursement twice. Claim the row first with one
+    // conditional UPDATE: it only matches while the row is still pending,
+    // still due and still at the attempt_count we read, and it pushes
+    // next_attempt_at out by a lease (request timeout + 60s). Exactly one
+    // replica gets the row back; the others skip it. If the claimer crashes
+    // mid-attempt the lease simply expires and the row is retried, as before.
+    const claimed = await pool.query(
+      `UPDATE webhook_deliveries
+          SET next_attempt_at = now() + ($3::text || ' milliseconds')::interval
+        WHERE id = $1 AND status = 'pending' AND attempt_count = $2 AND next_attempt_at <= now()
+        RETURNING id`,
+      [row.id, row.attempt_count, config.webhookRequestTimeoutMs + 60_000],
+    );
+    if (claimed.rowCount === 0) continue; // another replica owns this attempt
+    attempted += 1;
     try {
       await attemptOneDelivery(pool, transport, config, row);
     } catch (err: unknown) {
@@ -254,9 +273,18 @@ async function attemptDueDeliveries(pool: Pool, transport: WebhookTransport, con
         "[webhooks/dispatcher] delivery attempt threw before/around transport call, skipping row for this pass",
         { deliveryId: row.id, endpointId: row.endpoint_id, err },
       );
+      // FIX (B84): hand the claim back so the row is due again next pass, as
+      // the comment above promises (otherwise it would wait out the lease).
+      await pool
+        .query(
+          `UPDATE webhook_deliveries SET next_attempt_at = now()
+            WHERE id = $1 AND status = 'pending' AND attempt_count = $2`,
+          [row.id, row.attempt_count],
+        )
+        .catch(() => undefined);
     }
   }
-  return dueResult.rows.length;
+  return attempted; // FIX (B84): count only the rows this process actually claimed
 }
 
 /**

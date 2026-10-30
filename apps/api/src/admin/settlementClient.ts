@@ -275,9 +275,16 @@ export async function triggerMdrRecalculation(
 
 /**
  * Notifies the settlement service that a refund has been processed so it
- * can adjust the merchant’s next payout batch. The settlement service
- * expects amounts in the same scale the scheme export uses (2-decimal BHD,
- * i.e. fils / 10 to drop the sub-fils digit) so we convert before sending.
+ * can adjust the merchant’s next payout batch.
+ *
+ * FIX (B48): this used to send `Math.round(amountFils / 10)`, claiming the
+ * settlement service wants the 2-decimal scheme-export scale. It does not:
+ * ADR-0001 says every service speaks integer fils, the Go service is all
+ * fils, and the field is literally named `amountFils` (while
+ * feeReversedFils next to it was sent unscaled). A 4.755 BD refund would
+ * have arrived as 476 "fils". Nothing calls this helper yet (refunds are
+ * netted in CloseBatch), so this is a latent bug fixed before anyone wires
+ * it up: send the integer fils unchanged.
  */
 export async function notifySettlementRefundAdjustment(
   config: SettlementInternalConfig,
@@ -293,7 +300,7 @@ export async function notifySettlementRefundAdjustment(
     merchantId: input.merchantId,
     batchId: input.batchId,
     refundId: input.refundId,
-    amountFils: Math.round(input.amountFils / 10),
+    amountFils: input.amountFils, // FIX (B48): was Math.round(input.amountFils / 10)
     feeReversedFils: input.feeReversedFils,
   });
 }

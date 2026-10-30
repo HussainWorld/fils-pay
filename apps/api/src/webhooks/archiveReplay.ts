@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 import { insertAdminAuditLog } from "../adminAudit/log.js";
 import { withTransaction } from "../db/withTransaction.js";
-import { ConflictError, NotFoundError } from "../lib/errors.js";
+import { ConflictError, NotFoundError, UnprocessableEntityError } from "../lib/errors.js";
 import { insertReplayDeliveryRow } from "./replay.js";
 
 export interface ArchivedDeliveryEntry {
@@ -11,6 +11,9 @@ export interface ArchivedDeliveryEntry {
   payload: Record<string, unknown>;
   createdAt: string;
 }
+
+/** FIX (B37): upper bound on deliveries held in memory for one archive. */
+export const MAX_ARCHIVE_DELIVERIES = 5_000;
 
 export interface CreateArchiveResult {
   archiveId: string;
@@ -36,6 +39,24 @@ export async function createWebhookDeliveryArchive(
     );
     if (!endpoint.rows[0]) {
       throw new NotFoundError("webhook_endpoint_not_found");
+    }
+
+    // FIX (B37): the whole range was SELECTed, mapped and JSON.stringify'd in
+    // one go (and replay parses it all back), so an endpoint with a long
+    // history could take the api process down. Silently capping the archive
+    // would break the "complete record" promise above, so instead refuse a
+    // range that is too big BEFORE loading it, and tell the admin to split
+    // it. Both creation and replay are then bounded by the same limit.
+    const count = await client.query<{ n: string }>(
+      `SELECT COUNT(*) AS n FROM webhook_deliveries
+        WHERE endpoint_id = $1 AND created_at >= $2 AND created_at < $3`,
+      [input.endpointId, input.from, input.to],
+    );
+    if (Number(count.rows[0]!.n) > MAX_ARCHIVE_DELIVERIES) {
+      throw new UnprocessableEntityError(
+        "archive_range_too_large",
+        `range holds ${count.rows[0]!.n} deliveries; archive at most ${MAX_ARCHIVE_DELIVERIES} at a time (split the date range)`,
+      );
     }
 
     const rows = await client.query<{
@@ -117,6 +138,18 @@ export async function replayWebhookDeliveryArchive(
   input: { merchantId: string; archiveId: string; targetEndpointId: string; adminUserId: string },
 ): Promise<{ replayedCount: number }> {
   return withTransaction(pool, async (client) => {
+    // FIX (B37): check the stored count before pulling the JSON document,
+    // so an oversized archive made before the cap cannot OOM a replay.
+    const sizeResult = await client.query<{ delivery_count: number }>(
+      `SELECT delivery_count FROM webhook_delivery_archives WHERE id = $1 AND merchant_id = $2`,
+      [input.archiveId, input.merchantId],
+    );
+    if (!sizeResult.rows[0]) {
+      throw new NotFoundError("webhook_delivery_archive_not_found");
+    }
+    if (sizeResult.rows[0].delivery_count > MAX_ARCHIVE_DELIVERIES) {
+      throw new UnprocessableEntityError("archive_too_large_to_replay");
+    }
     const archiveResult = await client.query<{ archive_payload: string }>(
       `SELECT archive_payload FROM webhook_delivery_archives WHERE id = $1 AND merchant_id = $2`,
       [input.archiveId, input.merchantId],

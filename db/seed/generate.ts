@@ -117,6 +117,10 @@ const TABLES_TO_RESET = [
   "merchant_users",
   "merchants",
   "reporting_outbox_cursor",
+  // FIX (B75): the reporting consumer's applied-event set (0082) is keyed by
+  // outbox id. RESTART IDENTITY reuses ids from 1, so stale rows would make
+  // the consumer skip the freshly seeded events as "already applied".
+  "reporting_applied_events",
   // CSV adjustment imports. Listed explicitly rather than relied on
   // via CASCADE: adjustment_import_rows would be swept by the merchants
   // truncate below, but adjustment_imports itself only references
@@ -180,7 +184,34 @@ interface InsertedMerchant {
  * never runs nested inside another open transaction on the same
  * connection.
  */
+/**
+ * FIX (B52): the TRUNCATE below lists `merchants ... CASCADE`, which empties
+ * EVERY table that references a merchant (sessions, api_keys, payment_links,
+ * webhook_endpoints and deliveries, balances, rollups, ...), not just
+ * "fixture tables". The comment above it and RUNBOOK ("safe against a
+ * shared staging database") were wrong, and AM's note says staging-2 was
+ * reset exactly this way. A guard is more reliable than a runbook warning:
+ * refuse unless the database is on this machine, or the operator has said
+ * explicitly that this database is disposable (SEED_ALLOW_RESET=1, which the
+ * compose `seed` service sets because it only runs via `deploy.sh --seed`).
+ */
+export function assertDisposableDatabase(connectionString: string | undefined, env: NodeJS.ProcessEnv): void {
+  if (env.SEED_ALLOW_RESET === "1") return;
+  let host = "";
+  try {
+    host = new URL(connectionString ?? "").hostname.replace(/^\[|\]$/g, "");
+  } catch {
+    host = "";
+  }
+  if (host === "localhost" || host === "127.0.0.1" || host === "::1") return;
+  throw new Error(
+    `seed: refusing to TRUNCATE ${host || "this database"}: the seed wipes every merchant-linked table. ` +
+      "Run it only against a local database, or set SEED_ALLOW_RESET=1 if this database is disposable.",
+  );
+}
+
 export async function generate(pool: Pool): Promise<SeedSummary> {
+  assertDisposableDatabase((pool as unknown as { options: { connectionString?: string } }).options.connectionString, process.env);
   const rng = createRng(SEED);
   const config = loadConfig(process.env);
   const passwordHash = await hashPassword(SEED_USER_PASSWORD, config);
@@ -209,6 +240,8 @@ export async function generate(pool: Pool): Promise<SeedSummary> {
     try {
       // AM: only touches the fixture tables listed in TABLES_TO_RESET, so it's
       // safe to run against a shared/staging database. (see RUNBOOK)
+      // FIX (B52): not true — CASCADE through merchants reaches every
+      // merchant-linked table. Guarded by assertDisposableDatabase() above.
       await client.query(`TRUNCATE TABLE ${TABLES_TO_RESET.join(", ")} RESTART IDENTITY CASCADE`);
 
       // Admin staff fixtures. Ids come from the database's own

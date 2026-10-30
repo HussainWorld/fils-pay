@@ -60,6 +60,10 @@ services:
       # FIX D-6: the seed calls the api's loadConfig(); the built-in dev key used to be 34 bytes and crashed
       # it (fixed in config.ts). The seed still gets the same real key the api uses.
       WEBHOOK_SECRET_ENCRYPTION_KEY: ${WEBHOOK_SECRET_ENCRYPTION_KEY:?run ops/gen-env.sh}
+      # FIX (B52): the seed now refuses non-local databases unless told this one
+      # is disposable. This service only runs via `deploy.sh --seed` (profile
+      # "setup") against this stack's own postgres, so that is said here.
+      SEED_ALLOW_RESET: "1"
     depends_on:
       postgres:
         condition: service_healthy

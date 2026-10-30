@@ -89,7 +89,14 @@ export async function captureTransaction(
   acquirer: AcquirerSimulator,
   input: CaptureInput,
 ): Promise<CaptureResult> {
-  const requestHash = hashRequest({ amountFils: input.amountFils ?? null });
+  // FIX (B69): the hash covered only the amount, but the key is scoped to
+  // merchant + endpoint + key — not to the transaction in the URL. Reusing
+  // one Idempotency-Key with the same amount on a DIFFERENT transaction
+  // matched the stored hash and replayed the first transaction's capture
+  // response: the second transaction was never captured while the client
+  // was told it was. Including the transaction id (as processRefund already
+  // does) turns that into idempotency_key_reused (422) instead.
+  const requestHash = hashRequest({ transactionId: input.transactionId, amountFils: input.amountFils ?? null });
 
   return withTransaction(pool, async (client) => {
     const claim = await claimIdempotencyKey(client, {
