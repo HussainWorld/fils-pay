@@ -49,6 +49,17 @@ export function buildApp(config: Config, pool: Pool, options: BuildAppOptions = 
   app.register(cookiesPlugin);
   app.register(multipartPlugin, { config });
   app.setErrorHandler(errorHandler);
+  // FIX (GET http://localhost:8080/v1/ answered
+  // {"message":"Route GET:/v1/ not found","error":"Not Found","statusCode":404}):
+  // unknown URLs never reach errorHandler, so Fastify sent its own default
+  // body. That breaks the API's one error contract,
+  // { "error": "<machine code>", "message"?: "..." } (plugins/errorHandler.ts):
+  // `error` was a human phrase, not a code, so clients that branch on
+  // `error` (e.g. the dashboards' describeError) could not recognise a 404.
+  // Same status, same contract as every other error.
+  app.setNotFoundHandler((request, reply) => {
+    reply.code(404).send({ error: "not_found", message: `no route for ${request.method} ${request.url.split("?")[0]}` });
+  });
 
   app.register(healthRoutes); // unauthenticated, unprefixed
   app.register(authRoutes, { prefix: "/v1/auth" });
