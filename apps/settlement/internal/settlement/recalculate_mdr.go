@@ -59,6 +59,16 @@ func RecalculateMDR(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID,
 	if err != nil {
 		return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: load merchant: %w", err)
 	}
+	// FIX MR-1: this recalculated at merchants.mdr_bps, a column that is not kept in step with the
+	// effective-dated fee_schedules (the "0046 trigger" said to sync it does not exist). For a merchant
+	// whose contract moved to a schedule (Alpha: schedule 225 bps from 2026-08-01, column still 250),
+	// "recalculate at the current rate" re-priced history at the old rate and overcharged them. Use the
+	// rate the merchant's schedule says is current now, falling back to the column like capture does.
+	schedules, err := LoadFeeSchedules(ctx, tx, merchantID)
+	if err != nil {
+		return RecalcResult{}, fmt.Errorf("settlement: RecalculateMDR: load fee schedules: %w", err)
+	}
+	mdrBps = EffectiveMdrBpsAt(schedules, time.Now(), mdrBps)
 
 	rows, err := tx.Query(ctx, `
 		SELECT id, batch_date, status, gross_fils, fee_fils, net_payout_fils

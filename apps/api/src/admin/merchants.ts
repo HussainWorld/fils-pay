@@ -116,8 +116,13 @@ export async function listMerchantsForAdmin(
   const qUuid = q !== null && UUID_RE.test(q) ? q : null;
 
   const result = await pool.query<MerchantRow & { created_at_text: string }>(
+    // FIX FD-2: showed merchants.mdr_bps, which drifts from the effective-dated fee schedule (no sync
+    // trigger exists): Alpha listed at 2.50% while every capture charged the schedule's 2.25%. Show the
+    // rate actually charged now (schedule, else the column), the same resolution capture.ts uses.
     `SELECT m.id, m.display_name, m.status, m.onboarding_status, m.kyc_passed,
-            m.mdr_bps, m.test_mode, m.created_at, m.created_at::text AS created_at_text
+            COALESCE((SELECT fs.mdr_bps FROM fee_schedules fs
+                       WHERE fs.merchant_id = m.id AND fs.effective_from <= now()
+                       ORDER BY fs.effective_from DESC, fs.created_at DESC LIMIT 1), m.mdr_bps) AS mdr_bps, m.test_mode, m.created_at, m.created_at::text AS created_at_text
        FROM merchants m
        LEFT JOIN merchant_business_profiles bp ON bp.merchant_id = m.id
       WHERE ($1::text IS NULL
@@ -223,8 +228,12 @@ export async function getMerchantDetailForAdmin(
   merchantId: string,
 ): Promise<AdminMerchantDetail | null> {
   const merchantResult = await pool.query<MerchantRow>(
-    `SELECT id, display_name, status, onboarding_status, kyc_passed, mdr_bps, test_mode, created_at
-       FROM merchants WHERE id = $1`,
+    // FIX FD-2: the rate actually charged now (also drives the "reverse the MDR (x%)" label on Issue credit).
+    `SELECT m.id, m.display_name, m.status, m.onboarding_status, m.kyc_passed,
+            COALESCE((SELECT fs.mdr_bps FROM fee_schedules fs
+                       WHERE fs.merchant_id = m.id AND fs.effective_from <= now()
+                       ORDER BY fs.effective_from DESC, fs.created_at DESC LIMIT 1), m.mdr_bps) AS mdr_bps, m.test_mode, m.created_at
+       FROM merchants m WHERE m.id = $1`,
     [merchantId],
   );
   const merchantRow = merchantResult.rows[0];

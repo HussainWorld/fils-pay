@@ -3,6 +3,7 @@ import type { Pool, PoolClient } from "pg";
 import { addFils, toFils, ZERO_FILS, type Fils } from "@filspay/money";
 import { insertAdminAuditLog } from "../adminAudit/log.js";
 import { withTransaction } from "../db/withTransaction.js";
+import { getEffectiveMdrBps } from "../fees/feeSchedule.js";
 import { ConflictError, NotFoundError } from "../lib/errors.js";
 import { assertDistinctApprover } from "./creditApproval.js";
 import { calculateCreditFeeReversal, creditRequiresSecondApprover } from "./creditThreshold.js";
@@ -220,8 +221,18 @@ export async function createCreditRequest(
 
     // Never operator-supplied: the reversal is the merchant's own contracted
     // rate applied to the amount they asked to credit.
+    // FIX CR-1: this used merchants.mdr_bps, which is not kept in step with fee_schedules (the "0046
+    // trigger" that would sync it does not exist). A merchant on a 225 bps schedule with the column at 250
+    // had 2.50% "reversed" on fees that were charged at 2.25%: the platform overpaid every such credit. Use
+    // the rate in effect on the credit's effective date (Bahrain midnight), the same resolution capture uses.
+    const contractedMdrBps = await getEffectiveMdrBps(
+      client,
+      input.merchantId,
+      new Date(`${draft.effectiveDate}T00:00:00+03:00`),
+      merchant.mdr_bps,
+    );
     const feeReversalFils = draft.reverseFee
-      ? calculateCreditFeeReversal(draft.baseAmountFils, merchant.mdr_bps)
+      ? calculateCreditFeeReversal(draft.baseAmountFils, contractedMdrBps)
       : ZERO_FILS;
     // FH: threshold compares base + reversal, so a 50.000 BD credit with a fee reversal needs a second approver
     // MK: no — base only. fee reversal is mechanical. intended.
