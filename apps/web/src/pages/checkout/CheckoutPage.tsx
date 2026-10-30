@@ -115,7 +115,9 @@ export function CheckoutPage() {
           <dt>Transaction ID</dt>
           <dd>{payState.result.transactionId}</dd>
           <dt>Paid at</dt>
-          <dd>{payState.result.paidAt}</dd>
+          {/* FIX TZ-2: showed the raw UTC instant ("2026-10-30T08:34:52.775Z"), three hours off the buyer's
+              clock in Bahrain; render it in the buyer's own local time. */}
+          <dd>{new Date(payState.result.paidAt).toLocaleString()}</dd>
         </dl>
       </main>
     );

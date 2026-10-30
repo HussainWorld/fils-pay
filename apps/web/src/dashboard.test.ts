@@ -51,8 +51,9 @@ test("dash renders absent values as an em dash but keeps zero", () => {
   assert.equal(dash(0), "0");
 });
 
-test("dayStartIso converts a date input to a UTC day boundary", () => {
-  assert.equal(dayStartIso("2026-09-12"), "2026-09-12T00:00:00.000Z");
+// FIX TZ-1: this asserted a UTC midnight boundary, locking in the 3-hour shift against business days.
+test("dayStartIso converts a date input to the Bahrain business-day start", () => {
+  assert.equal(dayStartIso("2026-09-12"), "2026-09-11T21:00:00.000Z");
   assert.equal(dayStartIso(""), undefined);
 });
 

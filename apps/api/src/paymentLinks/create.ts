@@ -40,6 +40,12 @@ export async function createPaymentLink(
     throw new BadRequestError("invalid_amount", err instanceof Error ? err.message : String(err));
   }
 
+  // FIX TZ-2: a zone-less value ("2026-12-31T23:59") was parsed by `new Date` in the SERVER's timezone (UTC
+  // in the container), so a merchant's 23:59 Bahrain expiry became 02:59 the next morning, 3 hours late.
+  // The written time is only trustworthy with its offset: require Z or ±hh:mm (the dashboard sends Z).
+  if (typeof input.expiresAt !== "string" || !/(Z|[+-]\d{2}:?\d{2})$/i.test(input.expiresAt.trim())) {
+    throw new BadRequestError("invalid_expiry", "expiresAt must be an ISO 8601 date-time with a timezone (Z or +03:00)");
+  }
   const expiresAtDate = new Date(input.expiresAt);
   if (Number.isNaN(expiresAtDate.getTime()) || expiresAtDate.getTime() <= Date.now()) {
     throw new BadRequestError("invalid_expiry", "expiresAt must be a valid ISO 8601 date strictly in the future");
