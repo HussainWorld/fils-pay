@@ -204,6 +204,107 @@ Status: **Fixed** · **Open**.
 
 ---
 
+## Found by the live deep test (2026-10-30)
+
+Verified against the running Dilmune deployment and its database. Regression tests:
+`apps/api/src/deepTestFixes.fix.test.ts`,
+`apps/settlement/internal/settlement/batch_credit_mdr_fix_test.go`.
+
+### CR-1. Credits reversed fees at a stale rate — Fixed (money)
+- **What:** `createCreditRequest` computed the MDR reversal from `merchants.mdr_bps`.
+  That column isn't kept in step with the effective-dated `fee_schedules`: the
+  "0046 trigger" said to sync it doesn't exist (0046 is the splits table).
+- **Breaks:** Alpha is charged 225 bps (schedule since 2026-08-01) but its column says
+  250. Every credit "reversed" 2.50% of fees charged at 2.25%, overpaying 0.25 BD
+  per 100 BD credited.
+- **Fix:** the rate in effect on the credit's effective date, resolved like capture
+  does.
+
+### MR-1. MDR recalculation re-priced history at the stale rate — Fixed (money)
+- **What:** `RecalculateMDR` (Go) read the same stale column.
+- **Breaks:** "recalculate at the current rate" for a merchant on a schedule
+  re-priced every batch at the old rate, so Alpha would be overcharged
+  2.50% − 2.25% on its whole history. AUDIT-FIXES #7 fixed which batches are
+  touched, not which rate is used.
+- **Fix:** the schedule rate effective now (`EffectiveMdrBpsAt`), falling back to
+  the column.
+
+### FD-2. Admin console showed a fee that isn't charged — Fixed
+- **What:** the admin merchant list and detail showed `merchants.mdr_bps` (Alpha
+  2.50%, Beta 1.80%) while captures charge the schedule (2.25%, 1.65%). It's the
+  "fee shown ≠ fee charged" ticket on a second screen; the Issue-credit form label
+  showed the stale rate too.
+- **Fix:** both queries return the rate actually charged now (schedule, else the
+  column).
+
+### CP-1. Manual credits were never paid out — Fixed (decision: pay in the next batch)
+- **What:** credits are journaled to `merchant_payable` (ledger and balance cache),
+  but `CloseBatch` only netted captures, fees and refunds. No batch ever read
+  `credit_requests`.
+- **Breaks:** an approved goodwill or dispute credit raised the balance the merchant
+  saw, the money never arrived, and reconciliation showed it as an unexplained gap
+  (61 BD on Alpha during the deep test).
+- **Fix:** `CloseBatch` claims every posted, unpaid credit whose effective date is on
+  or before the business day and pays it: `net = gross − fee + credited`, recorded on
+  the batch (`credited_fils`) and on the credit (`settlement_batch_id`, migration
+  0080), so it's paid exactly once. Reconciliation counts unpaid credits as
+  pending, and the batch page shows them.
+- **Not covered:** finance CSV adjustment imports are ledger postings that are also
+  never paid out by a batch. They need the same treatment once finance confirms
+  they're meant to be paid (as opposed to correcting earlier payouts).
+
+### FP-203b. The balance cache drifted again after a rebuild — Fixed
+- **What:** two meanings of `merchant_balances` were mixed. The rebuild (FP-203
+  fix) sets it to the `merchant_payable` ledger balance, which includes unsettled
+  captures, while settlement added `+net` at batch close and captures/refunds never
+  touched it.
+- **Breaks:** after any rebuild, the next close counted unsettled money a second
+  time: Alpha +6.452 BD and Beta +5.900 BD the morning after the deep test's
+  rebuild. The number support and finance see goes wrong again by one day's volume.
+- **Fix:** the cache mirrors the ledger everywhere. Capture adds net, refund subtracts
+  (amount − fee reversed), close changes nothing (it posts nothing), and payout
+  subtracts net (unchanged). The Go test that expected `+net` at close was updated
+  with the reason.
+- **After deploying:** press Rebuild cached balances once to clear drift that
+  accumulated under the old model.
+
+### X-1. `/v1/reporting/export-summary` had no authentication — Fixed
+- **What:** it was registered with no `preHandler`, so `request.merchantAuth` was
+  never set and every call crashed reading it.
+- **Breaks:** a 500 for every merchant, and an endpoint that would answer anyone if
+  it ever worked.
+- **Fix:** `requireMerchantAuth`; 401 anonymous, 200 signed in.
+
+### UI-1. Refunds were invisible in the merchant's reports view — Fixed
+- **What:** `/v1/analytics/volumes` returns `refundCount`/`refundGrossFils` per day,
+  but the dashboard type and Overview table never included them.
+- **Fix:** Refunds and Refunded columns on Overview.
+
+### TZ-1. Transaction date filters used UTC days — Fixed
+- **What:** `dayStartIso` returned `<date>T00:00:00.000Z`. Settlement, reports and
+  reconciliation use Bahrain business days. The comment "fixed, uses bahrain time
+  now — am" was false, and the dashboard test asserted the UTC boundary.
+- **Breaks:** filtering "29 Oct" covered 03:00 29 Oct to 03:00 30 Oct Bahrain time:
+  three hours missing, three hours of the next day included.
+- **Fix:** Bahrain midnight (`+03:00`); the test now asserts the business-day start.
+
+### TZ-2. Times shown or parsed in the wrong place — Fixed
+- **What:** the checkout receipt printed the raw UTC instant
+  (`2026-10-30T08:34:52.775Z`, three hours off a Bahrain buyer's clock). The API
+  accepted zone-less expiry times and read them in the server's timezone (UTC), so a
+  23:59 Bahrain expiry ran until 02:59.
+- **Fix:** the receipt renders in the buyer's local time; `expiresAt` must carry `Z`
+  or an offset (400 otherwise). The dashboard already sends `Z`.
+
+### Also noted (not fixed)
+- Split payouts don't update the parent's lifetime payout estimate (monitoring only).
+- The settlement daemon re-runs the previous day every minute (idempotent, noisy
+  logs).
+- The live site is plain HTTP on a bare IP; recent Chrome upgrades to HTTPS and shows
+  an error. It needs a domain and TLS.
+
+---
+
 ## Refund IDs used in the Hussain branch → AUDIT-FIXES
 
 Both branches implemented FP-300 independently and found the same bugs. The
