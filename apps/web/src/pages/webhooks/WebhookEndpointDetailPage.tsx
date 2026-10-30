@@ -6,6 +6,7 @@ import { useDashboardAuth } from "../../auth/DashboardAuthContext.js";
 import { Pagination } from "../../components/Pagination.js";
 import { dash, dateTime } from "../../format.js";
 import type { WebhookDeliveryDto, WebhookDeliveryStatus, WebhookEndpointDto } from "../../types.js";
+import { MultiSelectFilter } from "../../components/FilterDropdown.js";
 
 /** `webhook_deliveries.status`' four CHECK values. Note the dispatcher only
  *  ever writes `succeeded`/`exhausted` — a row awaiting its next attempt
@@ -80,12 +81,6 @@ export function WebhookEndpointDetailPage() {
     void loadDeliveries(null);
   }, [loadDeliveries]);
 
-  function toggleStatus(status: WebhookDeliveryStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
-  }
-
   // FH: fast double click fires replay twice -> dup deliveries + the memory leak
   // busyId disables the button, cant double click — am
   async function handleReplay(delivery: WebhookDeliveryDto): Promise<void> {
@@ -143,19 +138,9 @@ export function WebhookEndpointDetailPage() {
 
       <h2>Delivery log</h2>
 
-      <fieldset className="dash-filters">
-        <legend>Status</legend>
-        {DELIVERY_STATUSES.map((status) => (
-          <label key={status}>
-            <input
-              type="checkbox"
-              checked={statuses.includes(status)}
-              onChange={() => toggleStatus(status)}
-            />
-            {status}
-          </label>
-        ))}
-      </fieldset>
+      <div className="dash-toolbar">
+        <MultiSelectFilter label="Status" options={DELIVERY_STATUSES} selected={statuses} onChange={setStatuses} />
+      </div>
 
       {error ? <p className="dash-error">{error}</p> : null}
 

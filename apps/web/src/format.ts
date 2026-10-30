@@ -62,3 +62,37 @@ export function localDateTimeToIso(value: string): string | null {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
+
+const BAHRAIN_OFFSET_MS = 3 * 60 * 60 * 1000;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Today's Asia/Bahrain business day as YYYY-MM-DD (UTC+3, no DST), whatever the browser's zone. */
+export function bahrainToday(now: number = Date.now()): string {
+  return new Date(now + BAHRAIN_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** A YYYY-MM-DD day moved by `days` calendar days. */
+export function addDays(day: string, days: number): string {
+  return new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** "29 Oct", or "29 Oct 2025" outside `currentYear`. */
+export function dayLabel(day: string, currentYear: string = bahrainToday().slice(0, 4)): string {
+  const [y, m, d] = day.split("-");
+  return `${Number(d)} ${MONTHS[Number(m) - 1]}${y === currentYear ? "" : ` ${y}`}`;
+}
+
+/**
+ * Human label for a filter range whose `to` is EXCLUSIVE (what the API takes), so the last day
+ * shown is the one before `to`: from 29 Oct, to 31 Oct reads "29 Oct – 30 Oct".
+ */
+export function dayRangeLabel(from: string, to: string, currentYear?: string): string {
+  const label = (d: string) => dayLabel(d, currentYear);
+  if (from && to) {
+    const last = addDays(to, -1);
+    return last === from ? label(from) : `${label(from)} – ${label(last)}`;
+  }
+  if (from) return `From ${label(from)}`;
+  if (to) return `Before ${label(to)}`;
+  return "Any time";
+}

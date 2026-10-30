@@ -5,6 +5,7 @@ import { describeError } from "../../api/client.js";
 import { Pagination } from "../../components/Pagination.js";
 import { bhd, dateTime } from "../../format.js";
 import type { SettlementBatchDto, SettlementBatchStatus } from "../../types.js";
+import { DateRangeFilter, MultiSelectFilter } from "../../components/FilterDropdown.js";
 
 const STATUSES: SettlementBatchStatus[] = ["open", "closed", "paid"];
 const PAGE_SIZE = 25;
@@ -55,41 +56,22 @@ export function SettlementBatchListPage() {
     void load(null);
   }, [load]);
 
-  function toggleStatus(status: SettlementBatchStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
-  }
-
   return (
     <section>
       <h1>Settlement batches</h1>
 
-      <fieldset className="dash-filters">
-        <legend>Batch date</legend>
-        <label>
-          From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          To (exclusive)
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-      </fieldset>
-
-      <fieldset className="dash-filters">
-        <legend>Status</legend>
-        {STATUSES.map((status) => (
-          <label key={status}>
-            <input
-              type="checkbox"
-              checked={statuses.includes(status)}
-              onChange={() => toggleStatus(status)}
-            />
-            {status}
-          </label>
-        ))}
-      </fieldset>
+      <div className="dash-toolbar">
+        <MultiSelectFilter label="Status" options={STATUSES} selected={statuses} onChange={setStatuses} />
+        <DateRangeFilter
+          label="Batch date"
+          from={from}
+          to={to}
+          onChange={(range) => {
+            setFrom(range.from);
+            setTo(range.to);
+          }}
+        />
+      </div>
 
       {error ? <p className="dash-error">{error}</p> : null}
 

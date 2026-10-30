@@ -4,6 +4,7 @@ import { listMerchants } from "../../api/merchants.js";
 import { bulkApproveKyc } from "../../api/merchantsBulk.js";
 import { describeError } from "../../api/client.js";
 import { RequireRole } from "../../auth/RequireRole.js";
+import { MultiSelectFilter } from "../../components/FilterDropdown.js";
 import type { AdminMerchantSummary, MerchantOnboardingStatus } from "../../types.js";
 
 const ONBOARDING_STATUSES: MerchantOnboardingStatus[] = [
@@ -57,12 +58,6 @@ export function MerchantListPage() {
     void load(null);
   }, [load]);
 
-  function toggleStatus(status: MerchantOnboardingStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
-  }
-
   function toggleSelected(id: string): void {
     setSelectedIds((previous) => {
       const next = new Set(previous);
@@ -105,14 +100,19 @@ export function MerchantListPage() {
       <h1>Merchants</h1>
 
       <form
-        className="admin-form admin-form-inline"
+        className="admin-toolbar"
+        role="search"
         onSubmit={(e) => {
           e.preventDefault();
           setAppliedQuery(query.trim());
         }}
       >
-        <label>
-          Search
+        <label className="admin-search">
+          <span className="admin-sr-only">Search merchants</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
           <input
             type="search"
             placeholder="Display name, merchant id, or contact email"
@@ -121,21 +121,13 @@ export function MerchantListPage() {
           />
         </label>
         <button type="submit">Search</button>
+        <MultiSelectFilter
+          label="Onboarding"
+          options={ONBOARDING_STATUSES}
+          selected={statuses}
+          onChange={setStatuses}
+        />
       </form>
-
-      <fieldset className="admin-filters">
-        <legend>Onboarding status</legend>
-        {ONBOARDING_STATUSES.map((status) => (
-          <label key={status}>
-            <input
-              type="checkbox"
-              checked={statuses.includes(status)}
-              onChange={() => toggleStatus(status)}
-            />
-            {status}
-          </label>
-        ))}
-      </fieldset>
 
       {error ? <p className="admin-error">{error}</p> : null}
       {bulkNotice ? <p className="admin-muted">{bulkNotice}</p> : null}

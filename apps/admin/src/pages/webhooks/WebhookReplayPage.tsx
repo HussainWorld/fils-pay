@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { getMerchant, listMerchants } from "../../api/merchants.js";
 import { replayBatch } from "../../api/webhooks.js";
 import { describeError } from "../../api/client.js";
+import { MultiSelectFilter } from "../../components/FilterDropdown.js";
 import type {
   AdminMerchantDetail,
   AdminMerchantSummary,
@@ -82,12 +83,6 @@ export function WebhookReplayPage() {
     } catch (err) {
       setError(describeError(err));
     }
-  }
-
-  function toggleStatus(status: WebhookDeliveryStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
   }
 
   /** Replays keep the original Webhook-Delivery-Id so receivers can dedupe. */
@@ -199,24 +194,20 @@ export function WebhookReplayPage() {
             onChange={(e) => setRange({ ...range, to: e.target.value })}
           />
         </label>
-        <fieldset className="admin-filters">
-          <legend>Delivery statuses to replay</legend>
-          {REPLAYABLE_STATUSES.map((status) => (
-            <label key={status}>
-              <input
-                type="checkbox"
-                checked={statuses.includes(status)}
-                onChange={() => toggleStatus(status)}
-              />
-              {status}
-            </label>
-          ))}
+        <div className="admin-toolbar">
+          <MultiSelectFilter
+            label="Statuses to replay"
+            options={REPLAYABLE_STATUSES}
+            selected={statuses}
+            onChange={setStatuses}
+            emptyLabel="Default (exhausted)"
+          />
           <p className="admin-muted">
             Defaults to <code>exhausted</code> — the one terminal failure state the dispatcher
             produces. Replaying a <code>succeeded</code> delivery is allowed but resends an event the
             receiver already accepted.
           </p>
-        </fieldset>
+        </div>
         <button type="submit" disabled={busy || !endpointId}>
           {busy ? "Replaying..." : "Replay batch"}
         </button>

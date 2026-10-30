@@ -7,6 +7,7 @@ import { RequireRole } from "../../auth/RequireRole.js";
 import { Pagination } from "../../components/Pagination.js";
 import { bhd, dash, dateTime } from "../../format.js";
 import type { PaymentLinkDto, PaymentLinkStatus } from "../../types.js";
+import { MultiSelectFilter } from "../../components/FilterDropdown.js";
 
 /** The four *stored* statuses, including `reserved` — the merchant-facing
  *  list deliberately exposes it distinctly rather than collapsing it into the
@@ -56,12 +57,6 @@ export function PaymentLinkListPage() {
     void load(null);
   }, [load]);
 
-  function toggleStatus(status: PaymentLinkStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
-  }
-
   return (
     <section>
       <h1>Payment links</h1>
@@ -74,19 +69,9 @@ export function PaymentLinkListPage() {
         </p>
       </RequireRole>
 
-      <fieldset className="dash-filters">
-        <legend>Status</legend>
-        {STATUSES.map((status) => (
-          <label key={status}>
-            <input
-              type="checkbox"
-              checked={statuses.includes(status)}
-              onChange={() => toggleStatus(status)}
-            />
-            {status}
-          </label>
-        ))}
-      </fieldset>
+      <div className="dash-toolbar">
+        <MultiSelectFilter label="Status" options={STATUSES} selected={statuses} onChange={setStatuses} />
+      </div>
 
       {error ? <p className="dash-error">{error}</p> : null}
 
