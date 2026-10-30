@@ -2,10 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getPayoutTrends, getTopLinks, getVolumes } from "../../api/analytics.js";
 import { describeError } from "../../api/client.js";
+import { DateRangeFilter, SelectFilter } from "../../components/FilterDropdown.js";
 import { StalenessBadge } from "../../components/StalenessBadge.js";
 import { bhd, dash, dateTime } from "../../format.js";
 import { formatCount } from "../../utils/helpers.js";
 import type { PayoutTrendsResponse, TopLinksResponse, VolumesResponse } from "../../types.js";
+
+const TOP_LINK_OPTIONS = [5, 10, 20, 50].map((n) => ({ value: n, label: `Top ${n}` }));
 
 /** 60s: comfortably above the reporting worker's 15s worst-case lag, and
  *  more than often enough for a dashboard. Poll, not push —
@@ -70,30 +73,27 @@ export function OverviewPage() {
       <h1>Overview</h1>
 
       <form
-        className="dash-form dash-form-inline"
+        className="dash-toolbar"
         onSubmit={(e) => {
           e.preventDefault();
           void load();
         }}
       >
-        <label>
-          From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          To (exclusive)
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-        <label>
-          Top links
-          <input
-            type="number"
-            min={1}
-            max={50}
-            value={topLinksLimit}
-            onChange={(e) => setTopLinksLimit(Number(e.target.value))}
-          />
-        </label>
+        <DateRangeFilter
+          label="Dates"
+          from={from}
+          to={to}
+          onChange={(range) => {
+            setFrom(range.from);
+            setTo(range.to);
+          }}
+        />
+        <SelectFilter
+          label="Top links"
+          value={topLinksLimit}
+          options={TOP_LINK_OPTIONS}
+          onChange={setTopLinksLimit}
+        />
         <button type="submit" className="dash-button" disabled={loading}>
           {loading ? "Refreshing..." : "Refresh"}
         </button>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { listTransactions } from "../../api/transactions.js";
 import { describeError } from "../../api/client.js";
+import { DateRangeFilter, MultiSelectFilter } from "../../components/FilterDropdown.js";
 import { Pagination } from "../../components/Pagination.js";
 import { bhd, dash, dateTime, dayStartIso } from "../../format.js";
 import { classNames, pluralize, truncateMiddle } from "../../utils/helpers.js";
@@ -38,7 +39,7 @@ export function TransactionListPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Debounce only the text box — the checkbox/date controls fire immediately,
+  // Debounce only the text box — the status/date dropdowns fire immediately,
   // since those are discrete choices, not a stream of keystrokes.
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
@@ -75,46 +76,26 @@ export function TransactionListPage() {
     void load(null);
   }, [load]);
 
-  function toggleStatus(status: TransactionStatus): void {
-    setStatuses((previous) =>
-      previous.includes(status) ? previous.filter((s) => s !== status) : [...previous, status],
-    );
+  const filtered = statuses.length > 0 || from !== "" || to !== "" || searchInput !== "";
+
+  function clearFilters(): void {
+    setStatuses([]);
+    setFrom("");
+    setTo("");
+    setSearchInput("");
   }
 
   return (
     <section>
       <h1>Transactions</h1>
 
-      <fieldset className="dash-filters">
-        <legend>Status</legend>
-        {STATUSES.map((status) => (
-          <label key={status}>
-            <input
-              type="checkbox"
-              checked={statuses.includes(status)}
-              onChange={() => toggleStatus(status)}
-            />
-            {status}
-          </label>
-        ))}
-      </fieldset>
-
-      <fieldset className="dash-filters">
-        <legend>Filter</legend>
-        <label>
-          From
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          {/* Exclusive, because the endpoint's own predicate is
-              `occurred_at < to` — labelled rather than quietly shifted by a
-              day here, which would make this page and the API disagree about
-              what a filter means. */}
-          To (exclusive)
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-        <label>
-          Search
+      <div className="dash-toolbar" role="search">
+        <label className="dash-search">
+          <span className="dash-sr-only">Search transactions</span>
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="9" cy="9" r="6" fill="none" stroke="currentColor" strokeWidth="1.8" />
+            <path d="M13.5 13.5L17 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
           <input
             type="search"
             placeholder="Reference, acquirer reference, or transaction id"
@@ -122,7 +103,25 @@ export function TransactionListPage() {
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </label>
-      </fieldset>
+        <MultiSelectFilter label="Status" options={STATUSES} selected={statuses} onChange={setStatuses} />
+        {/* `to` is exclusive, because the endpoint's own predicate is
+            `occurred_at < to`; the dropdown shows the last included day and
+            sends the exclusive bound, so this page and the API agree. */}
+        <DateRangeFilter
+          label="Date"
+          from={from}
+          to={to}
+          onChange={(range) => {
+            setFrom(range.from);
+            setTo(range.to);
+          }}
+        />
+        {filtered ? (
+          <button type="button" className="dash-toolbar-reset" onClick={clearFilters}>
+            Clear filters
+          </button>
+        ) : null}
+      </div>
 
       {error ? <p className="dash-error">{error}</p> : null}
 

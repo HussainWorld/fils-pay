@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getReconciliation } from "../../api/settlement.js";
 import { ApiError, describeError } from "../../api/client.js";
+import { DateRangeFilter } from "../../components/FilterDropdown.js";
 import { bhd } from "../../format.js";
 import type { ReconciliationReport } from "../../types.js";
 
@@ -82,21 +83,23 @@ export function ReconciliationPage() {
       <h1>Reconciliation</h1>
 
       <form
-        className="dash-form dash-form-inline"
+        className="dash-toolbar"
         onSubmit={(e) => {
           e.preventDefault();
           setApplied({ from, to });
         }}
       >
-        <label>
-          From
-          <input type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
-        </label>
-        <label>
-          To (exclusive)
-          <input type="date" required value={to} onChange={(e) => setTo(e.target.value)} />
-        </label>
-        <button type="submit" className="dash-button" disabled={loading}>
+        <DateRangeFilter
+          label="Period"
+          from={from}
+          to={to}
+          clearable={false}
+          onChange={(range) => {
+            setFrom(range.from);
+            setTo(range.to);
+          }}
+        />
+        <button type="submit" className="dash-button dash-button-primary" disabled={loading || !from || !to}>
           {loading ? "Loading..." : "Run report"}
         </button>
       </form>
