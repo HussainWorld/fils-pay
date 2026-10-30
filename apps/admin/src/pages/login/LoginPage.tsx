@@ -71,7 +71,12 @@ export function LoginPage() {
 
   return (
     <main className="admin-centered">
-      <h1>FilsPay Admin</h1>
+      <div className="admin-brand">
+        <span className="admin-logo" aria-hidden="true" />
+        FilsPay
+        <span className="admin-tag">Ops</span>
+      </div>
+      <h1>Sign in to the ops console</h1>
       <p className="admin-muted">Internal operations console.</p>
 
       {error ? <p className="admin-error">{error}</p> : null}
