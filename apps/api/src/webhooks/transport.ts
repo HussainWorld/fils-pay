@@ -28,6 +28,28 @@ export interface WebhookTransportResponse {
 
 export type WebhookTransport = (req: WebhookTransportRequest) => Promise<WebhookTransportResponse>;
 
+/** FIX (B80): webhook_deliveries only stores a 2000-char excerpt. */
+const RESPONSE_BODY_MAX_BYTES = 8 * 1024;
+
+/** Reads at most maxBytes of the body as UTF-8, then cancels the stream. */
+async function readAtMost(response: Response, maxBytes: number): Promise<string> {
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (total < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined);
+  }
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString("utf8");
+}
+
 /** Real transport: Node's global fetch with an AbortController-driven
  *  timeout, used by index.ts's production wiring. */
 export function createFetchTransport(): WebhookTransport {
@@ -50,7 +72,12 @@ export function createFetchTransport(): WebhookTransport {
       });
       // unbounded read, a 1gb response would oom us? — am
       // MK: timeoutMs bounds it. fine for now, revisit after Eid inshallah
-      const body = await response.text();
+      // FIX (B80): response.text() buffered the WHOLE body before the SQL
+      // left(..., 2000) excerpt threw almost all of it away. The timeout
+      // bounds how long, not how much: a fast endpoint can stream hundreds
+      // of MB inside it. Read only what we keep (plus margin) and cancel
+      // the rest of the stream.
+      const body = await readAtMost(response, RESPONSE_BODY_MAX_BYTES);
       return { statusCode: response.status, body };
     } catch (err) {
       return {

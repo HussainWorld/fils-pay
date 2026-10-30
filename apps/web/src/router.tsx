@@ -20,6 +20,13 @@ import { OverviewPage } from "./pages/overview/OverviewPage.js";
 
 // MK: /refunds route removed until FP-212
 export const router = createBrowserRouter([
+  // FIX (http://localhost:8080/ showed "Unexpected Application Error! 404 Not
+  // Found"): nginx serves this app for every path (try_files ... /index.html),
+  // but the router only defined /pay/:token and /dashboard/*. Any other URL,
+  // including the site root everyone opens first, matched no route, so React
+  // Router rendered its raw built-in error page. Send the root to the
+  // dashboard (which itself redirects to login when signed out)...
+  { path: "/", element: <Navigate to="/dashboard" replace /> },
   { path: "/pay/:token", element: <CheckoutPage /> },
 
   {
@@ -101,4 +108,9 @@ export const router = createBrowserRouter([
       },
     ],
   },
+
+  // ...and any other unknown URL (an old bookmark, a typo) to the same place
+  // instead of the router's error screen. Must stay last: React Router ranks
+  // specific paths above "*", so /pay/:token and /dashboard/* still win.
+  { path: "*", element: <Navigate to="/dashboard" replace /> },
 ]);

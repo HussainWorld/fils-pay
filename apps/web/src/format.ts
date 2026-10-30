@@ -1,4 +1,4 @@
-import { formatBhd, toFils } from "@filspay/money";
+import { formatBhd, parseBhdToFils, toFils } from "@filspay/money";
 
 /**
  * The dashboard's display helpers. Deliberately thin: `bhd` delegates to
@@ -13,6 +13,20 @@ export function bhd(amountFils: number): string {
   // toFils() rejects negatives by default, so rendering a refund on the
   // transaction timeline threw and blanked the whole page.
   return `${formatBhd(toFils(amountFils, { allowNegative: true }))} BHD`;
+}
+
+/**
+ * A BHD amount typed into a form ("4.75", "4.750", "12") as positive integer fils, or null when the text
+ * isn't a valid positive amount with at most 3 decimals. Parsing is `@filspay/money`'s `parseBhdToFils`,
+ * the same string-to-fils path the API uses, so there is no second parser in the browser.
+ */
+export function bhdInputToFils(text: string): number | null {
+  try {
+    const fils = parseBhdToFils(text.replace(/,/g, ""));
+    return fils > 0 ? fils : null;
+  } catch {
+    return null;
+  }
 }
 
 /** `—` for a null/absent value, so an empty table cell is visibly empty

@@ -1,192 +1,543 @@
-/* No design system, no UI kit — the same "real but small" minimalism
-   apps/web's checkout page ships with. Just enough for dense operational
-   tables to be readable and for the impersonation banner to be impossible
-   to overlook. */
+/* FilsPay admin console — the ops half of the "ink & signal red" design
+   system (FilsPay Redesign canvas): ink sidebar with an OPS tag, white work
+   surfaces, IBM Plex Mono for every amount and id. Dense operational tables
+   stay readable, and the impersonation banner is impossible to overlook.
+   This app has its own bundle, so element-level rules are safe here. */
+
+:root {
+  --fp-ink: #12141a;
+  --fp-ink-2: #3b4150;
+  --fp-muted: #5b6170;
+  --fp-ground: #f5f6f8;
+  --fp-surface: #ffffff;
+  --fp-border: #e3e6eb;
+  --fp-border-strong: #d5d9e0;
+  --fp-row: #eef0f3;
+  --fp-head: #f8f9fa;
+  --fp-nav: #14161c;
+  --fp-nav-2: #1d2027;
+  --fp-nav-active: #262a33;
+  --fp-nav-text: #c9cdd6;
+  --fp-accent: #c8102e;
+  --fp-accent-hover: #9e0b23;
+  --fp-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 15px;
-  color: #1a1a1a;
-  background: #fafafa;
+  line-height: 1.45;
+  color: var(--fp-ink);
+  background: var(--fp-ground);
+  font-variant-numeric: tabular-nums;
 }
 
 code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--fp-mono);
   font-size: 0.9em;
 }
 
+h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+h2 {
+  margin: 36px 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+h3 {
+  margin: 24px 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+a {
+  color: var(--fp-accent);
+  font-weight: 500;
+}
+
+a:hover {
+  color: var(--fp-accent-hover);
+}
+
+/* ---------- shell: sidebar + content ---------- */
+
 .admin-shell {
   min-height: 100vh;
+  display: flex;
+  flex-wrap: wrap;
 }
 
 .admin-header {
+  flex: 1 1 240px;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 24px 16px;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 0.75rem 1.5rem;
-  background: #fff;
-  border-bottom: 1px solid #ddd;
+  flex-direction: column;
+  gap: 28px;
+  background: var(--fp-nav);
+  color: #e8eaee;
+}
+
+@media (min-width: 900px) {
+  .admin-header {
+    flex: 0 0 248px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  /* the banner sits above the sidebar when a grant is live */
+  .impersonation-banner ~ .admin-header {
+    height: auto;
+  }
 }
 
 .admin-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+  font-size: 18px;
   font-weight: 700;
+  letter-spacing: -0.01em;
+  color: #ffffff;
+}
+
+.admin-logo {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  padding: 5px;
+  border-radius: 6px;
+  background: var(--fp-accent);
+  display: inline-flex;
+  align-items: flex-end;
+}
+
+.admin-logo::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--fp-nav);
+}
+
+.admin-tag {
+  padding: 2px 8px;
+  border: 1px solid #3a3f4b;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fp-nav-text);
 }
 
 .admin-nav {
   display: flex;
-  gap: 1rem;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .admin-nav a {
-  color: #1a1a1a;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+  color: var(--fp-nav-text);
   text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.admin-nav a:hover {
+  background: var(--fp-nav-2);
+  color: #ffffff;
 }
 
 .admin-nav a.active {
-  font-weight: 700;
-  text-decoration: underline;
+  background: var(--fp-nav-active);
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.admin-nav svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .admin-identity {
-  margin-left: auto;
+  margin-top: auto;
   display: flex;
-  align-items: center;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--fp-nav-2);
+  font-size: 13px;
+  color: #a9afbc;
+  overflow-wrap: anywhere;
+}
+
+.admin-identity button {
+  min-height: 36px;
+  background: transparent;
+  border-color: #3a3f4b;
+  color: #e8eaee;
+}
+
+.admin-identity button:hover {
+  background: var(--fp-nav-active);
 }
 
 .admin-role-chip {
-  padding: 0.1rem 0.4rem;
-  border: 1px solid #999;
-  border-radius: 3px;
-  font-size: 0.8em;
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border: 1px solid #3a3f4b;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fp-nav-text);
+}
+
+.admin-body {
+  flex: 999 1 560px;
+  min-width: 0;
+}
+
+.admin-body > .admin-error {
+  margin: 16px 40px 0;
 }
 
 .admin-main {
-  max-width: 70rem;
+  max-width: 1160px;
   margin: 0 auto;
-  padding: 1.5rem;
+  padding: 32px 40px 56px;
+  box-sizing: border-box;
 }
 
-.admin-centered {
-  max-width: 26rem;
-  margin: 4rem auto;
-  padding: 1.5rem;
+@media (max-width: 700px) {
+  .admin-main {
+    padding: 24px 16px 40px;
+  }
 }
+
+/* ---------- sign in ---------- */
+
+.admin-centered {
+  max-width: 420px;
+  margin: 10vh auto;
+  padding: 32px;
+  box-sizing: border-box;
+  background: var(--fp-surface);
+  border: 1px solid var(--fp-border);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(18, 20, 26, 0.08);
+}
+
+.admin-centered .admin-brand {
+  padding: 0;
+  margin-bottom: 24px;
+  color: var(--fp-ink);
+}
+
+.admin-centered .admin-tag {
+  border-color: var(--fp-border-strong);
+  color: var(--fp-ink-2);
+}
+
+@media (max-width: 480px) {
+  .admin-centered {
+    margin: 0;
+    min-height: 100vh;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 24px 16px;
+  }
+}
+
+/* ---------- forms and buttons ---------- */
 
 .admin-form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
-  margin: 1rem 0;
+  gap: 16px;
+  margin: 16px 0;
+  padding: 20px 24px;
   max-width: 40rem;
+  box-sizing: border-box;
+  background: var(--fp-surface);
+  border: 1px solid var(--fp-border);
+  border-radius: 12px;
+}
+
+.admin-centered .admin-form {
+  padding: 0;
+  border: 0;
 }
 
 .admin-form-inline {
   flex-direction: row;
+  flex-wrap: wrap;
   align-items: flex-end;
+  max-width: none;
 }
 
-.admin-form label {
+.admin-form label,
+.admin-filters label {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fp-ink-2);
 }
 
 .admin-form input,
 .admin-form select,
-.admin-form textarea {
-  padding: 0.4rem;
-  font: inherit;
-  border: 1px solid #bbb;
-  border-radius: 3px;
+.admin-form textarea,
+.admin-filters input,
+.admin-filters select {
+  min-height: 44px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: 1px solid var(--fp-border-strong);
+  border-radius: 8px;
+  background: var(--fp-surface);
+  font: 400 15px Inter, system-ui, sans-serif;
+  color: var(--fp-ink);
 }
 
-/* MK: global button style, temporary until the design system (Nov 2025) */
+.admin-form textarea {
+  padding: 10px 12px;
+  font: 400 13px/1.5 var(--fp-mono);
+}
+
+.admin-form input[type="checkbox"],
+.admin-form input[type="radio"],
+.admin-filters input[type="checkbox"] {
+  min-height: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  accent-color: var(--fp-ink);
+}
+
+.admin-form input:focus,
+.admin-form select:focus,
+.admin-form textarea:focus,
+.admin-filters input:focus,
+.admin-filters select:focus {
+  outline: 3px solid rgba(200, 16, 46, 0.18);
+  border-color: var(--fp-accent);
+}
+
 button {
-  padding: 0.4rem 0.8rem;
-  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 16px;
+  box-sizing: border-box;
+  border: 1px solid var(--fp-border-strong);
+  border-radius: 10px;
+  background: var(--fp-surface);
+  color: var(--fp-ink);
+  font: 600 14px Inter, system-ui, sans-serif;
   cursor: pointer;
-  border: 1px solid #888;
-  border-radius: 3px;
-  background: #fff;
+}
+
+button:hover {
+  background: #f1f2f5;
+}
+
+button[type="submit"] {
+  background: var(--fp-nav);
+  border-color: var(--fp-nav);
+  color: #ffffff;
+}
+
+button[type="submit"]:hover {
+  background: var(--fp-nav-active);
+}
+
+button:focus-visible,
+.admin-nav a:focus-visible {
+  outline: 3px solid rgba(200, 16, 46, 0.35);
+  outline-offset: 2px;
 }
 
 button:disabled {
   cursor: default;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .admin-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.75rem;
-  border: 1px solid #ddd;
-  padding: 0.5rem 0.75rem;
-  margin: 1rem 0;
+  align-items: flex-end;
+  gap: 16px;
+  margin: 20px 0;
+  padding: 16px 20px;
+  background: var(--fp-surface);
+  border: 1px solid var(--fp-border);
+  border-radius: 12px;
 }
 
-.admin-filters label {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-}
+/* ---------- tables ---------- */
 
 .admin-table {
   width: 100%;
-  border-collapse: collapse;
-  margin: 1rem 0;
-  background: #fff;
+  margin: 16px 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--fp-surface);
+  border: 1px solid var(--fp-border);
+  border-radius: 12px;
+  overflow: hidden;
+  font-size: 14px;
 }
 
-.admin-table th,
-.admin-table td {
-  border: 1px solid #e0e0e0;
-  padding: 0.4rem 0.6rem;
+.admin-table th {
+  padding: 11px 14px;
+  background: var(--fp-head);
+  color: var(--fp-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   text-align: left;
-  vertical-align: top;
+  white-space: nowrap;
+}
+
+.admin-table td {
+  padding: 13px 14px;
+  border-top: 1px solid var(--fp-row);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.admin-table tbody tr:hover td {
+  background: #fafbfc;
+}
+
+.admin-table a {
+  color: var(--fp-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.admin-table a:hover {
+  color: var(--fp-accent);
+}
+
+.admin-table button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+@media (max-width: 760px) {
+  .admin-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
 }
 
 .admin-dl {
   display: grid;
-  grid-template-columns: 12rem 1fr;
-  gap: 0.25rem 1rem;
-  margin: 1rem 0;
+  grid-template-columns: minmax(10rem, 14rem) 1fr;
+  gap: 12px 24px;
+  margin: 16px 0;
+  padding: 20px 24px;
+  background: var(--fp-surface);
+  border: 1px solid var(--fp-border);
+  border-radius: 12px;
 }
 
 .admin-dl dt {
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fp-muted);
 }
 
 .admin-dl dd {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
+@media (max-width: 600px) {
+  .admin-dl {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .admin-dl dd {
+    margin-bottom: 10px;
+  }
+}
+
+/* ---------- messages ---------- */
+
 .admin-muted {
-  color: #666;
+  color: var(--fp-muted);
+}
+
+.admin-error,
+.admin-notice,
+.admin-confirm {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: 10px;
+  font-size: 14px;
 }
 
 .admin-error {
-  padding: 0.6rem 0.8rem;
-  border: 1px solid #b00020;
-  background: #fdeaea;
-  color: #7a0016;
+  border: 1px solid #f3c2ca;
+  background: #fdecee;
+  color: #9e0b23;
 }
 
 .admin-notice {
-  padding: 0.6rem 0.8rem;
-  border: 1px solid #2a6f2a;
-  background: #eef7ee;
-  margin: 1rem 0;
+  border: 1px solid #c6e6d3;
+  background: #e6f4ec;
+  color: #0f5c38;
 }
 
 .admin-confirm {
-  padding: 0.8rem;
-  border: 2px solid #b06000;
-  background: #fff6e8;
-  margin: 1rem 0;
   max-width: 40rem;
+  border: 1px solid #f3c2ca;
+  background: #fdf3f5;
+  color: var(--fp-ink);
+}
+
+.admin-confirm .admin-dl {
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 
 .admin-id-list {
@@ -194,19 +545,22 @@ button:disabled {
   overflow-y: auto;
 }
 
-/* Deliberately loud: an active impersonation grant must never be something
-   an operator can fail to notice. */
+/* Impersonation: full width above everything, sticky, alarm colours — the
+   one state an operator can fail to notice. */
 .impersonation-banner {
+  flex: 1 1 100%;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1rem;
-  padding: 0.75rem 1.5rem;
-  background: #7a0016;
-  color: #fff;
+  padding: 14px 24px;
+  background: var(--fp-accent-hover);
+  color: #ffffff;
   border-bottom: 4px solid #ffcc00;
   position: sticky;
   top: 0;
   z-index: 10;
+  font-weight: 500;
 }
 
 .impersonation-banner code {
@@ -215,14 +569,59 @@ button:disabled {
 
 .impersonation-banner button {
   margin-left: auto;
-  background: #fff;
-  color: #7a0016;
+  background: #ffffff;
+  color: var(--fp-accent-hover);
   font-weight: 700;
-  border-color: #fff;
+  border-color: #ffffff;
   white-space: nowrap;
 }
 
 .impersonation-banner-error {
   margin-top: 0.4rem;
   font-weight: 700;
+}
+
+/* a label wrapping a checkbox/radio reads as one line: box, then text */
+.admin-form label:has(> input[type="checkbox"]),
+.admin-form label:has(> input[type="radio"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+/* below the sidebar breakpoint: compact top bar, nav scrolls sideways */
+@media (max-width: 899px) {
+  .admin-header {
+    flex: 1 1 100%;
+    padding: 12px 16px;
+    gap: 12px;
+  }
+
+  .admin-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    margin: 0 -16px;
+    padding: 0 16px;
+  }
+
+  .admin-nav a {
+    min-height: 40px;
+    white-space: nowrap;
+  }
+
+  .admin-identity {
+    margin-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+  }
+}
+
+.admin-filters label:has(> input[type="checkbox"]) {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
 }

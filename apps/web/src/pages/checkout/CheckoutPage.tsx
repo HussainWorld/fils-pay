@@ -171,10 +171,15 @@ export function CheckoutPage() {
 
   return (
     <main className="checkout-page">
-      <h1>{link.merchantDisplayName}</h1>
-      <p className="checkout-amount">{amount} BHD</p>
-      {link.description ? <p className="checkout-description">{link.description}</p> : null}
-      {link.reference ? <p className="checkout-reference">Reference: {link.reference}</p> : null}
+      <section className="checkout-summary" aria-label="Payment summary">
+        <p className="checkout-eyebrow">Pay</p>
+        <h1>{link.merchantDisplayName}</h1>
+        <p className="checkout-amount">
+          {amount} <span>BHD</span>
+        </p>
+        {link.description ? <p className="checkout-description">{link.description}</p> : null}
+        {link.reference ? <p className="checkout-reference">Reference: {link.reference}</p> : null}
+      </section>
 
       {payState.kind === "declined" ? <p className="checkout-error">{payState.message}</p> : null}
 

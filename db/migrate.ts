@@ -68,6 +68,13 @@ async function main(): Promise<void> {
 // if an applied migration has changed — so never edit an applied .sql file,
 // not even its comments.
 // AM: I only see filename + applied_at in the table?
+// FIX (B57): AM is right — there is NO checksum. schema_migrations stores
+// only (filename, applied_at), and an applied file is skipped by name, so an
+// edited applied migration is silently ignored, not refused. MK's guarantee
+// above was false, and people relied on it. The rule still stands (never edit
+// an applied .sql file — add a new migration), but nothing enforces it; the
+// review is the only check. Adding checksums would be a separate, deliberate
+// change (it would need a backfill for every already-applied file).
 async function bootstrapSchemaMigrationsTable(client: Client): Promise<void> {
   await client.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (

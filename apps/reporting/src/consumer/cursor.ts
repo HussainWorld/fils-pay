@@ -29,7 +29,15 @@ export async function readCursor(client: QueryableClient, consumerName: string):
     [consumerName],
   );
 
-  const result = (await client.query(`SELECT last_processed_id FROM reporting_outbox_cursor WHERE consumer_name = $1`, [
+  // FIX (B74): the read had no lock, and the `running` flag am mentions
+  // only guards passes inside ONE process. The worker daemon, `reporting
+  // catch-up` (RUNBOOK says it is safe beside the worker) and a second
+  // replica each read the same watermark, applied the same events and
+  // double-counted the rollups (am's "rollup looked high" on 2026-09-14).
+  // FOR UPDATE makes the cursor row the lock the runConsumerPass docblock
+  // already claims it is: a second pass waits for the first to commit and
+  // then reads the advanced watermark.
+  const result = (await client.query(`SELECT last_processed_id FROM reporting_outbox_cursor WHERE consumer_name = $1 FOR UPDATE`, [
     consumerName,
   ])) as { rows: CursorRow[] };
 
@@ -61,4 +69,7 @@ export async function resetCursor(client: QueryableClient, consumerName: string)
      ON CONFLICT (consumer_name) DO UPDATE SET last_processed_id = 0, updated_at = now()`,
     [consumerName],
   );
+  // FIX (B75): a full replay starts from nothing, so forget which events the
+  // late-commit lookback (runConsumerPass) has already applied too.
+  await client.query(`DELETE FROM reporting_applied_events WHERE consumer_name = $1`, [consumerName]);
 }

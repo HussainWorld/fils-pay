@@ -324,9 +324,17 @@ export async function adminMerchantRoutes(app: FastifyInstance): Promise<void> {
    * confers (merchant role 'support', always), not from restricting who may
    * start one.
    */
+  // FIX (B64): the route had only requireAdminSession, so "who may
+  // impersonate" was whatever roles happen to exist — and the "super_admin
+  // gate in middleware" that CLAUDE.md describes does not exist anywhere.
+  // ADMIN.md's role table is the policy: support, finance and super_admin
+  // may all "view as a merchant", and the grant is always read-only merchant
+  // 'support' (B35). Naming the roles on the route makes that an explicit
+  // allow-list, so any admin role added later is denied until someone
+  // decides otherwise, instead of silently getting impersonation.
   app.post<{ Params: MerchantIdParams }>(
     "/:id/impersonate",
-    { preHandler: [requireAdminSession] },
+    { preHandler: [requireAdminSession, requireAdminRole("support", "finance", "super_admin")] },
     async (request, reply) => {
       const adminAuth = request.adminAuth;
       if (!adminAuth) throw new UnauthorizedError("unauthenticated");

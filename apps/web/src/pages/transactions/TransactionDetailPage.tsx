@@ -8,7 +8,7 @@ import {
 } from "../../api/transactions.js";
 import { ApiError, describeError } from "../../api/client.js";
 import { RequireRole } from "../../auth/RequireRole.js";
-import { bhd, dash, dateTime } from "../../format.js";
+import { bhd, bhdInputToFils, dash, dateTime } from "../../format.js";
 import type { TransactionDto, TransactionEventDto } from "../../types.js";
 import { RefundDrawer } from "./RefundDrawer.js";
 
@@ -63,14 +63,19 @@ export function TransactionDetailPage() {
   async function handleCapture(event: React.FormEvent): Promise<void> {
     event.preventDefault();
     if (!id) return;
+    const trimmed = captureAmount.trim();
+    const amountFils = trimmed === "" ? null : bhdInputToFils(trimmed);
+    if (trimmed !== "" && amountFils === null) {
+      setActionError("Enter a BHD amount with at most 3 decimals, e.g. 4.750.");
+      return;
+    }
     setSubmitting(true);
     setActionError(null);
     try {
-      const trimmed = captureAmount.trim();
       // Left blank, `amountFils` is omitted entirely and capture.ts captures
       // everything still outstanding — its own documented default. Computing
       // the remainder here would just be a second, staler copy of that rule.
-      const input = trimmed === "" ? {} : { amountFils: Number(trimmed) };
+      const input = amountFils === null ? {} : { amountFils };
       // A fresh Idempotency-Key per click, including a retry after a decline —
       // same discipline as the checkout page's submit handler.
       await captureTransaction(id, input, crypto.randomUUID());
@@ -177,16 +182,16 @@ export function TransactionDetailPage() {
               captureOpen ? (
                 <form className="dash-form dash-form-inline" onSubmit={(e) => void handleCapture(e)}>
                   <label>
-                    Amount in fils (blank captures everything outstanding)
+                    Capture amount (BHD) — blank captures everything outstanding
                     <input
-                      type="number"
-                      min={1}
-                      step={1}
+                      type="text"
+                      inputMode="decimal"
+                      className="dash-input-amount"
                       value={captureAmount}
                       onChange={(e) => setCaptureAmount(e.target.value)}
                     />
                   </label>
-                  <button type="submit" className="dash-button" disabled={submitting}>
+                  <button type="submit" className="dash-button dash-button-primary" disabled={submitting}>
                     {submitting ? "Capturing..." : "Capture"}
                   </button>
                   <button

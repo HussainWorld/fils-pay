@@ -133,7 +133,13 @@ npm run migrate && npm run seed
 
 The seed truncates and regenerates the fixture tables it owns and
 self-checks the result. It prints `REAL FAIL` lines if anything doesn't
-come out as expected — don't ignore them. It won't touch other tables, so
-it's safe against a shared staging database.
+come out as expected — don't ignore them.
+
+**It is NOT safe against a shared database.** Its `TRUNCATE merchants ...
+CASCADE` empties every table that references a merchant (sessions, API
+keys, payment links, webhooks, balances, reports). It refuses to run unless
+`DATABASE_URL` points at localhost, or you set `SEED_ALLOW_RESET=1` to say
+the database is disposable. (FIX B52: this paragraph used to say the seed
+"won't touch other tables, so it's safe against a shared staging database".)
 
 > **AM (Sept):** check DATABASE_URL before seeding. staging-2 got reset this way

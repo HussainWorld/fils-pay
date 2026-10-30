@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/filspay/settlement/internal/config"
+	"github.com/filspay/settlement/internal/ledger"
 	"github.com/filspay/settlement/internal/settlement"
 )
 
@@ -49,6 +50,8 @@ func Run(ctx context.Context, db *pgxpool.Pool, cfg config.Config) {
 	// any past date, processed or not.
 	// am: runs on boot before the delay check, so a restart at 00:05 closes early. saw it once
 	runIfDue(ctx, db, cfg.DaemonRunDelayMinutes)
+	var lastBalanceRefresh time.Time // FIX (B55): Bahrain date of the last nightly refresh
+	lastBalanceRefresh = refreshBalancesIfDue(ctx, db, lastBalanceRefresh)
 
 	for {
 		select {
@@ -57,8 +60,45 @@ func Run(ctx context.Context, db *pgxpool.Pool, cfg config.Config) {
 			return
 		case <-ticker.C:
 			runIfDue(ctx, db, cfg.DaemonRunDelayMinutes)
+			lastBalanceRefresh = refreshBalancesIfDue(ctx, db, lastBalanceRefresh)
 		}
 	}
+}
+
+// FIX (B55): ARCHITECTURE.md ("the daemon also refreshes it at 02:00
+// Bahrain time") and ADMIN.md ("the nightly recompute does the same thing
+// at 02:00") both promise a nightly recompute of the merchant_balances
+// cache, and support/finance judge how stale a balance can be from that.
+// The daemon never did it — it only closed batches and enqueued payout
+// notifications. Run the existing full ledger rebuild (the same
+// ledger.RebuildAllBalances the CLI and the console button use since B14)
+// once per Bahrain day, on the first tick at or after 02:00. The rebuild is
+// idempotent, so a restart that runs it a second time is harmless.
+const balanceRefreshHourBahrain = 2
+
+func refreshBalancesIfDue(ctx context.Context, db *pgxpool.Pool, last time.Time) time.Time {
+	today, due := balanceRefreshDue(time.Now().UTC(), last)
+	if !due {
+		return last
+	}
+	diffs, err := ledger.RebuildAllBalances(ctx, db)
+	if err != nil {
+		log.Printf("settlement daemon: nightly balance refresh failed: %v", err)
+		return last // retried on the next tick
+	}
+	log.Printf("settlement daemon: nightly balance refresh recomputed %d merchant balance(s)", len(diffs))
+	return today
+}
+
+// balanceRefreshDue reports whether the nightly refresh should run now:
+// it is 02:00 Bahrain or later and it has not run yet for today's date.
+func balanceRefreshDue(now time.Time, last time.Time) (time.Time, bool) {
+	today := settlement.BusinessDateAt(now)
+	todayStart, _ := settlement.BusinessDayWindow(today)
+	if now.Before(todayStart.Add(balanceRefreshHourBahrain * time.Hour)) {
+		return today, false
+	}
+	return today, last.Before(today)
 }
 
 // runIfDue takes the business date from the Asia/Bahrain calendar date of
