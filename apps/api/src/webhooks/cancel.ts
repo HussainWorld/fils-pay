@@ -14,6 +14,10 @@ export type DeleteWebhookEndpointResult = "deleted" | "not_found";
  */
 // FH: docblock says deliveries are kept and there's no ON DELETE CASCADE — then the FK blocks the DELETE and we 500?
 // YA: FK is ON DELETE SET NULL (0029). fine
+// FIX (B87): FH was right — the FK was NO ACTION, not SET NULL (0029 is a
+// payment-links index), so deleting an endpoint with any delivery history
+// 500'd. Migration 0081 makes the FKs ON DELETE SET NULL; this statement is
+// unchanged and now behaves as the docblock says.
 export async function deleteWebhookEndpoint(
   pool: Pool,
   input: { merchantId: string; id: string },

@@ -359,6 +359,29 @@ func CloseBatch(ctx context.Context, db *pgxpool.Pool, merchantID uuid.UUID, bus
 		if err != nil {
 			return BatchResult{}, fmt.Errorf("settlement: CloseBatch: insert scheme export line: %w", err)
 		}
+
+		// FIX (B15): ADR-0002 (Option A, "implemented inside CloseBatch")
+		// says every exported line posts its truncation residue, but only the
+		// line was written. The 0-9 fils per line that never reach the scheme
+		// stayed in card_scheme_clearing, so the ledger could not tie to the
+		// scheme statement and scheme_rounding_residue was always empty. Post
+		// the ADR's balanced pair in this same transaction (so a line and its
+		// residue commit or roll back together; CloseBatch's already-closed
+		// guard keeps a re-run from posting twice). The group id is derived
+		// from batch + line, so each residue is traceable to its line. Lines
+		// that truncate exactly post nothing (ledger_entries requires > 0).
+		if residue := int64(line.grossFils) - int64(truncated); residue > 0 {
+			groupID := uuid.NewSHA1(batchID, []byte(fmt.Sprintf("scheme-residue:%d", i+1)))
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO ledger_entries
+				  (entry_group_id, merchant_id, settlement_batch_id, account_id, direction, amount_fils, occurred_at, description)
+				VALUES
+				  ($1, $2, $3, 'card_scheme_clearing',    'credit', $4, now(), 'scheme export: rounding residue'),
+				  ($1, $2, $3, 'scheme_rounding_residue', 'debit',  $4, now(), 'scheme export: rounding residue')
+			`, groupID, merchantID, batchID, residue); err != nil {
+				return BatchResult{}, fmt.Errorf("settlement: CloseBatch: post scheme residue: %w", err)
+			}
+		}
 	}
 
 	// Step 13: enqueue settlement.batch_closed onto the shared outbox, in

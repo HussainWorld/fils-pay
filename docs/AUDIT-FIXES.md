@@ -86,6 +86,34 @@ password, an inverted DB-URL precedence, no way to log in in production, no
 CORS, Node 20 running zero tests), plus R-16 (MDR recalculation erased
 refund deductions). See **[FINDINGS.md](../FINDINGS.md)**.
 
+## Checklist round 2 (B-list, 2026-10-30)
+
+The 18 items still open from the external B01–B91 checklist. Each has a
+`FIX (Bnn):` comment at the change and a test that fails on the old code
+(`round2*.fix.test.ts`, `scheme_residue_b15_test.go`,
+`balance_refresh_b55_test.go`, `scripts/seedGuard.fix.test.ts`).
+
+| # | Problem | Fix | Where |
+|---|---|---|---|
+| B64 | Impersonation route had no role check at all | explicit allow-list from ADMIN.md (support, finance, super_admin); grant stays read-only | `routes/adminMerchants.ts` |
+| B72 | A report could be scoped to another marketplace's split child | child must belong to the caller (`parent_merchant_id`) | `reporting/scope.ts` |
+| B69 | Capture key reused on another transaction replayed the first result | transaction id in the request hash (as refunds already do) | `payments/capture.ts` |
+| B48 | Refund adjustment sent fils / 10 | send fils unchanged (helper not wired yet) | `admin/settlementClient.ts` |
+| B15 | Scheme residue never posted (ADR-0002) | balanced residue pair per line inside CloseBatch | `settlement/batch.go` |
+| B87 | Deleting an endpoint with history → FK error 500 | FKs `ON DELETE SET NULL`, history kept | migration 0081 |
+| B84 | Two api replicas could send the same delivery | per-row conditional claim (lease) before sending | `webhooks/dispatcher.ts` |
+| B80 | Webhook response body read in full | read at most 8 KiB, cancel the rest | `webhooks/transport.ts` |
+| B37 | Archive loaded whole history in memory | refuse ranges over 5,000 deliveries (create and replay) | `webhooks/archiveReplay.ts` |
+| B74 | Reporting cursor not locked across processes | `FOR UPDATE` on the cursor row | `reporting/consumer/cursor.ts` |
+| B75 | Late-committing events skipped forever | 1-hour lookback + applied-event set | `runConsumerPass.ts`, migration 0082 |
+| B76 | Admin rollup rebuild double-counted with the worker (and dropped refunds) | one snapshot, cursor locked and moved; refund columns rebuilt | `admin/reportingRebuild.ts` |
+| B78 | Payout trends never saw `settlement.paid` | consume it, refresh status/paid_at | `consumer/applyEvent.ts` |
+| B86 | "50 saved filters" cap did not exist | enforced atomically on create | `reporting/savedFilters.ts` |
+| B85 | Bulk KYC approved any id, no review rows | `under_review` predicate + `merchant_kyc_reviews` rows | `admin/bulkKyc.ts` |
+| B52 | Seed wiped shared databases | refuses non-local DBs unless `SEED_ALLOW_RESET=1`; RUNBOOK corrected | `db/seed/generate.ts` |
+| B55 | Documented 02:00 balance refresh missing | daemon runs the ledger rebuild once per Bahrain day after 02:00 | `scheduler/daemon.go` |
+| B57 | Comment promised migration checksums | comment corrected (no checksum exists) | `db/migrate.ts` |
+
 ## Still open (not fixed, flagged)
 
 - The acquirer secret that was committed in `ops/.env.docker` is removed from the file (FINDINGS D-3), but it is still in git history: rotate it with the acquirer.

@@ -212,6 +212,19 @@ export async function applyEvent(client: PoolClient, row: OutboxEventRow): Promi
       const payload = row.payload as { merchantId: string; amountFils: number };
       return applyDailySummaryRollup(client, payload.merchantId, row.created_at, Number(payload.amountFils));
     }
+    // FIX (B78): refresh the cached status/paid_at of the batch that was
+    // just paid. aggregate_id is the settlement batch id (payout_notify.go).
+    // UPDATE only: if batch_closed has not been consumed yet there is no
+    // row, and applyBatchClosed reads status/paid_at from the batch itself.
+    case "settlement.paid":
+      await client.query(
+        `UPDATE merchant_payout_trends mpt
+            SET status = sb.status, paid_at = sb.paid_at, last_updated_at = now()
+           FROM settlement_batches sb
+          WHERE sb.id = $1 AND mpt.settlement_batch_id = sb.id`,
+        [row.aggregate_id],
+      );
+      return;
     default:
       throw new Error(`applyEvent: unhandled event_type ${row.event_type}`);
   }
